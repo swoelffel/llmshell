@@ -9,3 +9,15 @@ name = "llmsh"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+directories = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
+llmsh-audit = { path = "../llmsh-audit" }
+llmsh-core = { path = "../llmsh-core" }
+llmsh-llm = { path = "../llmsh-llm" }
+llmsh-llm-openai = { path = "../llmsh-llm-openai" }
+llmsh-policy = { path = "../llmsh-policy" }
+llmsh-tools = { path = "../llmsh-tools" }
