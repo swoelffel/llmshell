@@ -149,7 +149,9 @@ impl Repl {
         for a in &sargs {
             cmd.arg(a);
         }
-        cmd.arg(command).current_dir(&self.state.cwd);
+        cmd.arg(command)
+            .current_dir(&self.state.cwd)
+            .kill_on_drop(true);
         let cancel = self.root_cancel.clone();
         let child = cmd.spawn()?;
         // Collect into output in a cancellable way; spawn a task then await it.
