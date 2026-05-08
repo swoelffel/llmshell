@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const SCHEMA_VERSION: u32 = 1;
+// v1: initial schema
+// v2: added MachineAuditPerformed variant
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -104,6 +106,14 @@ pub enum AuditEvent {
     SessionEnded {
         ts: String,
         reason: String,
+    },
+    #[serde(rename = "machine_audit_performed")]
+    MachineAuditPerformed {
+        ts: String,
+        host: String,
+        os: String,
+        user: String,
+        tooling_count: usize,
     },
 }
 
