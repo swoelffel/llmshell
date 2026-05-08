@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
+use llmsh_core::config::CompactConfig;
 use llmsh_core::confirm::AlwaysYesGate;
 use llmsh_core::context::{ContextBuilder, MemorySystemPrompt};
 use llmsh_core::executor::ToolExecutor;
@@ -203,6 +204,7 @@ async fn rendered_system_prompt_reflects_model_switch() {
             max_tool_calls_per_iteration: 5,
             max_schema_repair_attempts: 2,
         },
+        compact_config: CompactConfig::default(),
         policy_ctx: PolicyContext {
             cwd: canonical_ws.clone(),
             workspace_root: canonical_ws.clone(),

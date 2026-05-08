@@ -68,6 +68,7 @@ async fn redaction_no_literal_secrets_in_audit() {
         use llmsh_audit::redact::Redactor;
         use llmsh_audit::writer::AuditWriter;
         use llmsh_core::agent::{AgentBounds, AgentDeps};
+        use llmsh_core::config::CompactConfig;
         use llmsh_core::confirm::AlwaysYesGate;
         use llmsh_core::context::StaticSystemPrompt;
         use llmsh_core::executor::ToolExecutor;
@@ -103,6 +104,7 @@ async fn redaction_no_literal_secrets_in_audit() {
                 max_tool_calls_per_iteration: 5,
                 max_schema_repair_attempts: 2,
             },
+            compact_config: CompactConfig::default(),
             policy_ctx: PolicyContext {
                 cwd: tmp_canonical.clone(),
                 workspace_root: tmp_canonical.clone(),

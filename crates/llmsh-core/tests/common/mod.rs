@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_core::agent::{AgentBounds, AgentDeps};
+use llmsh_core::config::CompactConfig;
 use llmsh_core::confirm::AlwaysYesGate;
 use llmsh_core::executor::ToolExecutor;
 use llmsh_core::memory::Memory;
@@ -150,6 +151,7 @@ pub fn build_test_deps_with_memory(
             max_tool_calls_per_iteration: 5,
             max_schema_repair_attempts: 2,
         },
+        compact_config: CompactConfig::default(),
         policy_ctx,
         sensitive_patterns,
         model_label: Arc::new(RwLock::new("mock:test".into())),

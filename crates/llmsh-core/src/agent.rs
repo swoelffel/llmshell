@@ -1,3 +1,5 @@
+use crate::compactor;
+use crate::config::CompactConfig;
 use crate::context::{ContextBuilder, SystemPromptSource};
 use crate::executor::ToolExecutor;
 use crate::memory::{ActionKind, Memory, RecentAction};
@@ -28,6 +30,7 @@ pub struct AgentDeps {
     pub audit: std::sync::Mutex<AuditWriter>,
     pub redactor: Redactor,
     pub bounds: AgentBounds,
+    pub compact_config: CompactConfig,
     pub policy_ctx: PolicyContext,
     pub sensitive_patterns: Vec<String>,
     pub model_label: std::sync::Arc<std::sync::RwLock<String>>,
@@ -84,6 +87,53 @@ impl AgentLoop {
                     assistant_text: None,
                     stopped_reason: "max_iterations".into(),
                 });
+            }
+
+            // Auto-compaction: triggered by the prior turn's input_tokens
+            // crossing the configured threshold for the active model.
+            {
+                let last_input = dep
+                    .stats
+                    .read()
+                    .ok()
+                    .and_then(|s| s.last_turn.as_ref().map(|t| t.input_tokens))
+                    .unwrap_or(0);
+                let model_now = dep
+                    .model_label
+                    .read()
+                    .map(|g| g.clone())
+                    .unwrap_or_else(|_| "unknown".into());
+                let window = llmsh_llm::context_window::context_window_for(&model_now);
+                let threshold =
+                    (window as u64 * dep.compact_config.auto_threshold_pct as u64 / 100) as u32;
+                if dep.compact_config.auto_threshold_pct > 0
+                    && last_input > 0
+                    && last_input >= threshold
+                {
+                    let report = compactor::compact(
+                        &mut self.builder.messages,
+                        &dep.compact_config,
+                        compactor::CompactionReason::Auto,
+                        &model_now,
+                        last_input,
+                        dep.provider.clone(),
+                    )
+                    .await;
+                    let _ = dep
+                        .audit
+                        .lock()
+                        .unwrap()
+                        .write(&AuditEvent::ContextCompacted {
+                            ts: now_iso(),
+                            reason: report.reason.as_str().into(),
+                            strategy: report.strategy.as_str().into(),
+                            messages_before: report.messages_before,
+                            messages_after: report.messages_after,
+                            bytes_before: report.bytes_before,
+                            bytes_after: report.bytes_after,
+                            summary_digest: report.summary_digest,
+                        });
+                }
             }
 
             let req = LlmRequest {

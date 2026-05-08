@@ -7,7 +7,7 @@ use llmsh_core::agent::{AgentBounds, AgentDeps};
 use llmsh_core::agents_md::load_agents_md;
 use llmsh_core::config::load::{load_or_create_user, load_project, user_config_path};
 use llmsh_core::config::merge::merge_project;
-use llmsh_core::config::Config;
+use llmsh_core::config::{CompactConfig, Config};
 use llmsh_core::confirm::StdinConfirmationGate;
 use llmsh_core::context::MemorySystemPrompt;
 use llmsh_core::executor::ToolExecutor;
@@ -195,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
             max_tool_calls_per_iteration: cfg.limits.max_tool_calls_per_iteration,
             max_schema_repair_attempts: cfg.limits.max_schema_repair_attempts,
         },
+        compact_config: CompactConfig::default(),
         policy_ctx,
         sensitive_patterns: cfg.policy.sensitive_paths.patterns.clone(),
         model_label: shared_model.clone(),
