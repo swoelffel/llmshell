@@ -14,5 +14,6 @@ pub mod plan;
 pub mod raw_shell;
 pub mod repl;
 pub mod session_stats;
+pub mod status_prompt;
 pub mod sysctx;
 pub mod text;

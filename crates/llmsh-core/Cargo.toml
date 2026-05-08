@@ -23,6 +23,7 @@ reedline = { workspace = true }
 rusqlite = { workspace = true }
 sysinfo = { workspace = true }
 libc = { workspace = true }
+nu-ansi-term = { workspace = true }
 toml_edit = { workspace = true }
 llmsh-llm = { path = "../llmsh-llm" }
 llmsh-tools = { path = "../llmsh-tools" }
