@@ -11,8 +11,7 @@ pub fn user_config_path(override_path: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = override_path {
         return Some(p.to_path_buf());
     }
-    directories::ProjectDirs::from("", "", "llmsh")
-        .map(|d| d.config_dir().join("config.toml"))
+    directories::ProjectDirs::from("", "", "llmsh").map(|d| d.config_dir().join("config.toml"))
 }
 
 pub fn load_or_create_user(path: &Path) -> anyhow::Result<(Config, bool)> {
