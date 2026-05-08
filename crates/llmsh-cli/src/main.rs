@@ -143,13 +143,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // 6. Memory
-    let memory_path = if let Ok(v) = std::env::var("LLMSH_MEMORY_DB") {
-        PathBuf::from(v)
-    } else {
-        directories::ProjectDirs::from("", "", "llmsh")
-            .map(|d| d.data_dir().join("memory.db"))
-            .ok_or_else(|| anyhow::anyhow!("could not determine data dir for memory.db"))?
-    };
+    let memory_path = memory_path_from_env_or_default(std::env::var("LLMSH_MEMORY_DB").ok())?;
     let memory = Arc::new(Memory::open(&memory_path)?);
 
     // 7. Agent deps
@@ -248,4 +242,37 @@ fn filtered_env() -> std::collections::HashMap<String, String> {
     std::env::vars()
         .filter(|(k, _)| allow.contains(&k.as_str()))
         .collect()
+}
+
+fn memory_path_from_env_or_default(env_value: Option<String>) -> anyhow::Result<PathBuf> {
+    if let Some(v) = env_value.filter(|s| !s.is_empty()) {
+        return Ok(PathBuf::from(v));
+    }
+    directories::ProjectDirs::from("", "", "llmsh")
+        .map(|d| d.data_dir().join("memory.db"))
+        .ok_or_else(|| anyhow::anyhow!("could not determine data dir for memory.db"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_env_falls_back_to_default() {
+        let p = memory_path_from_env_or_default(Some("".into())).unwrap();
+        assert!(p.ends_with("memory.db"));
+        assert!(p.parent().is_some());
+    }
+
+    #[test]
+    fn unset_env_falls_back_to_default() {
+        let p = memory_path_from_env_or_default(None).unwrap();
+        assert!(p.ends_with("memory.db"));
+    }
+
+    #[test]
+    fn explicit_env_used_verbatim() {
+        let p = memory_path_from_env_or_default(Some("/tmp/custom.db".into())).unwrap();
+        assert_eq!(p, PathBuf::from("/tmp/custom.db"));
+    }
 }
