@@ -110,7 +110,7 @@ async fn redaction_no_literal_secrets_in_audit() {
             },
             sensitive_patterns: vec![],
             model_label: "mock:test".into(),
-            system_prompt: Arc::new(StaticSystemPrompt { agents_md: None }),
+            system_prompt: Arc::new(StaticSystemPrompt::new(None)),
         })
     };
 

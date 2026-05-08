@@ -10,12 +10,14 @@ Never assume actions succeeded until tool results confirm them. \
 The Runtime context and Recent activity sections below describe the current machine \
 state and the latest actions in this session — use them to ground your answers.";
 
+// The four Option<String> slots below are filled by later phases (B/C/D/E);
+// Phase A leaves them None.
 pub struct SystemPromptBuilder {
-    pub persona: &'static str,
+    persona: &'static str,
     pub agents_md: Option<String>,
-    pub long_term_memory: Option<String>, // Phase B/D
-    pub runtime_context: Option<String>,  // Phase C
-    pub recent_activity: Option<String>,  // Phase B
+    pub long_term_memory: Option<String>,
+    pub runtime_context: Option<String>,
+    pub recent_activity: Option<String>,
 }
 
 impl SystemPromptBuilder {
@@ -30,35 +32,29 @@ impl SystemPromptBuilder {
     }
 
     pub fn build(&self) -> String {
-        let mut parts: Vec<&str> = vec![self.persona];
-
-        // Helper to check whether an optional section has non-empty content.
         fn non_empty(s: &Option<String>) -> Option<&str> {
             s.as_deref().filter(|v| !v.is_empty())
         }
 
-        // Sections are stored as owned strings so we build headers inline.
-        // We collect (header, body) pairs to avoid lifetime friction.
-        let mut sections: Vec<String> = vec![];
+        let mut out = self.persona.to_string();
+        let push = |out: &mut String, header: &str, body: &str| {
+            out.push_str("\n\n");
+            out.push_str(header);
+            out.push('\n');
+            out.push_str(body);
+        };
 
         if let Some(body) = non_empty(&self.agents_md) {
-            sections.push(format!("=== AGENTS.md ===\n{body}"));
+            push(&mut out, "=== AGENTS.md ===", body);
         }
         if let Some(body) = non_empty(&self.long_term_memory) {
-            sections.push(format!("=== Long-term memory ===\n{body}"));
+            push(&mut out, "=== Long-term memory ===", body);
         }
         if let Some(body) = non_empty(&self.runtime_context) {
-            sections.push(format!("=== Runtime context ===\n{body}"));
+            push(&mut out, "=== Runtime context ===", body);
         }
         if let Some(body) = non_empty(&self.recent_activity) {
-            sections.push(format!("=== Recent activity ===\n{body}"));
-        }
-
-        // Build the final prompt: persona first (stable prefix), then sections.
-        let mut out = parts.remove(0).to_string();
-        for section in &sections {
-            out.push_str("\n\n");
-            out.push_str(section);
+            push(&mut out, "=== Recent activity ===", body);
         }
         out
     }
@@ -70,8 +66,8 @@ impl Default for SystemPromptBuilder {
     }
 }
 
-// Phase A constructs the system prompt from a closure — later phases replace it
-// with a richer closure that also injects runtime_context and recent_activity.
+// Phase A constructs the system prompt from a struct — later phases replace it
+// with a richer struct that also injects runtime_context and recent_activity.
 // Using a trait object keeps AgentDeps extensible without threading concrete
 // types through every callsite that only needs `current()`.
 pub trait SystemPromptSource: Send + Sync {
@@ -79,7 +75,13 @@ pub trait SystemPromptSource: Send + Sync {
 }
 
 pub struct StaticSystemPrompt {
-    pub agents_md: Option<String>,
+    agents_md: Option<String>,
+}
+
+impl StaticSystemPrompt {
+    pub fn new(agents_md: Option<String>) -> Self {
+        Self { agents_md }
+    }
 }
 
 impl SystemPromptSource for StaticSystemPrompt {

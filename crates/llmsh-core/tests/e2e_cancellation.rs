@@ -102,7 +102,7 @@ async fn external_cancel_recorded_in_audit() {
         },
         sensitive_patterns: vec![],
         model_label: "mock:test".into(),
-        system_prompt: Arc::new(StaticSystemPrompt { agents_md: None }),
+        system_prompt: Arc::new(StaticSystemPrompt::new(None)),
     });
 
     // Fire the cancel token after 100 ms while the agent loop is running.

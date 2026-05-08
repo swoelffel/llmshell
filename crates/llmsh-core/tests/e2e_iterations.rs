@@ -85,7 +85,7 @@ async fn max_iterations_stops_loop() {
         },
         sensitive_patterns: vec![],
         model_label: "mock:test".into(),
-        system_prompt: Arc::new(StaticSystemPrompt { agents_md: None }),
+        system_prompt: Arc::new(StaticSystemPrompt::new(None)),
     });
 
     let mut agent = AgentLoop {

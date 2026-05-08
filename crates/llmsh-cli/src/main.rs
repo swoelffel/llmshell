@@ -143,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 6. Agent deps
     let agents_md = load_agents_md();
-    let system_prompt = Arc::new(StaticSystemPrompt { agents_md });
+    let system_prompt = Arc::new(StaticSystemPrompt::new(agents_md));
     let deps = Arc::new(AgentDeps {
         provider,
         pipeline,
