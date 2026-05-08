@@ -3,6 +3,7 @@ use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_core::agent::{AgentBounds, AgentDeps};
 use llmsh_core::confirm::AlwaysYesGate;
+use llmsh_core::context::StaticSystemPrompt;
 use llmsh_core::executor::ToolExecutor;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_llm::capabilities::{Capabilities, ToolCallingMode};
@@ -17,12 +18,14 @@ use tokio_util::sync::CancellationToken;
 
 pub struct MockLlmProvider {
     pub scripted: Mutex<Vec<LlmResponse>>,
+    pub captured: Mutex<Vec<LlmRequest>>,
 }
 
 impl MockLlmProvider {
     pub fn new(responses: Vec<LlmResponse>) -> Self {
         Self {
             scripted: Mutex::new(responses),
+            captured: Mutex::new(vec![]),
         }
     }
 }
@@ -39,7 +42,8 @@ impl LlmProvider for MockLlmProvider {
             max_context_tokens: None,
         }
     }
-    async fn complete(&self, _: LlmRequest) -> anyhow::Result<LlmResponse> {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        self.captured.lock().unwrap().push(req);
         let mut s = self.scripted.lock().unwrap();
         if s.is_empty() {
             anyhow::bail!("no scripted responses");
@@ -57,6 +61,7 @@ impl LlmProvider for MockLlmProvider {
 /// - `audit_dir`: temp dir for the audit log
 /// - `policy_ctx`: policy context
 /// - `sensitive_patterns`: sensitive path patterns forwarded to the pipeline
+/// - `agents_md`: optional AGENTS.md content injected into the system prompt
 pub fn build_test_deps(
     registry: Arc<ToolRegistry>,
     responses: Vec<LlmResponse>,
@@ -64,6 +69,27 @@ pub fn build_test_deps(
     audit_dir: &std::path::Path,
     policy_ctx: PolicyContext,
     sensitive_patterns: Vec<String>,
+) -> Arc<AgentDeps> {
+    build_test_deps_with_agents_md(
+        registry,
+        responses,
+        gate,
+        audit_dir,
+        policy_ctx,
+        sensitive_patterns,
+        None,
+    )
+}
+
+#[allow(dead_code)]
+pub fn build_test_deps_with_agents_md(
+    registry: Arc<ToolRegistry>,
+    responses: Vec<LlmResponse>,
+    gate: Arc<dyn llmsh_core::confirm::ConfirmationGate>,
+    audit_dir: &std::path::Path,
+    policy_ctx: PolicyContext,
+    sensitive_patterns: Vec<String>,
+    agents_md: Option<String>,
 ) -> Arc<AgentDeps> {
     let provider = Arc::new(MockLlmProvider::new(responses));
     let policy = Arc::new(DefaultPolicyEngine::new(DefaultPolicyConfig::default()));
@@ -94,6 +120,7 @@ pub fn build_test_deps(
         policy_ctx,
         sensitive_patterns,
         model_label: "mock:test".into(),
+        system_prompt: Arc::new(StaticSystemPrompt { agents_md }),
     })
 }
 
