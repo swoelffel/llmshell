@@ -119,7 +119,7 @@ impl Repl {
         match cmd {
             "help" => {
                 println!(
-                    "/help /exit /clear /pwd /cd <path> /history /model [list|set <id>] /init"
+                    "/help /exit /clear /compact /pwd /cd <path> /history /model [list|set <id>] /init"
                 );
             }
             "init" => {
@@ -195,6 +195,53 @@ impl Repl {
                     "Conversation cleared ({} message(s) dropped).",
                     kept_capacity
                 );
+            }
+            "compact" => {
+                let model_now = self
+                    .deps
+                    .model_label
+                    .read()
+                    .map(|g| g.clone())
+                    .unwrap_or_else(|_| "unknown".into());
+                let last_input = self
+                    .deps
+                    .stats
+                    .read()
+                    .ok()
+                    .and_then(|s| s.last_turn.as_ref().map(|t| t.input_tokens))
+                    .unwrap_or(0);
+                let report = crate::compactor::compact(
+                    &mut self.builder.messages,
+                    &self.deps.compact_config,
+                    crate::compactor::CompactionReason::Manual,
+                    &model_now,
+                    last_input.max(u32::MAX / 2),
+                    self.deps.provider.clone(),
+                )
+                .await;
+                println!(
+                    "compacted: {} → {} messages, {} → {} bytes ({})",
+                    report.messages_before,
+                    report.messages_after,
+                    report.bytes_before,
+                    report.bytes_after,
+                    report.strategy.as_str(),
+                );
+                let _ = self
+                    .deps
+                    .audit
+                    .lock()
+                    .unwrap()
+                    .write(&AuditEvent::ContextCompacted {
+                        ts: now_iso(),
+                        reason: report.reason.as_str().into(),
+                        strategy: report.strategy.as_str().into(),
+                        messages_before: report.messages_before,
+                        messages_after: report.messages_after,
+                        bytes_before: report.bytes_before,
+                        bytes_after: report.bytes_after,
+                        summary_digest: report.summary_digest,
+                    });
             }
             other => eprintln!("unknown meta command: /{}", other),
         }
