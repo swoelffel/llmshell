@@ -81,6 +81,10 @@ pub fn parse_response(resp: ChatResponse) -> anyhow::Result<LlmResponse> {
         input_tokens: u.prompt_tokens,
         output_tokens: u.completion_tokens,
         total_tokens: u.total_tokens,
+        cached_input_tokens: u
+            .prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cached_tokens),
     });
     let final_finish = if !tool_calls.is_empty() {
         FinishReason::ToolCalls
@@ -99,6 +103,36 @@ pub fn parse_response(resp: ChatResponse) -> anyhow::Result<LlmResponse> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parses_cached_tokens_from_prompt_details() {
+        let raw = r#"{
+            "choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"hi"}}],
+            "usage":{
+                "prompt_tokens":1234,
+                "completion_tokens":56,
+                "total_tokens":1290,
+                "prompt_tokens_details":{"cached_tokens":900}
+            }
+        }"#;
+        let parsed: ChatResponse = serde_json::from_str(raw).unwrap();
+        let r = parse_response(parsed).unwrap();
+        let u = r.usage.expect("usage present");
+        assert_eq!(u.input_tokens, Some(1234));
+        assert_eq!(u.output_tokens, Some(56));
+        assert_eq!(u.cached_input_tokens, Some(900));
+    }
+
+    #[test]
+    fn cached_tokens_absent_is_none() {
+        let raw = r#"{
+            "choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"hi"}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}
+        }"#;
+        let parsed: ChatResponse = serde_json::from_str(raw).unwrap();
+        let r = parse_response(parsed).unwrap();
+        assert_eq!(r.usage.unwrap().cached_input_tokens, None);
+    }
 
     #[test]
     fn parses_tool_call() {

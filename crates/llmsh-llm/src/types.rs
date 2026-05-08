@@ -56,6 +56,8 @@ pub struct TokenUsage {
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
     pub total_tokens: Option<u32>,
+    /// Subset of `input_tokens` served from the provider's prompt cache.
+    pub cached_input_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
