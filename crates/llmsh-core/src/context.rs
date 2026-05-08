@@ -116,7 +116,10 @@ impl MemorySystemPrompt {
             .map(|a| match a.kind {
                 ActionKind::UserInput => format!("user: {}", a.summary),
                 ActionKind::Assistant => format!("assistant: {}", a.summary),
-                ActionKind::Tool => format!("tool: {}", a.summary),
+                ActionKind::Tool => match a.summary.split_once(": ") {
+                    Some((name, rest)) => format!("tool[{}]: {}", name, rest),
+                    None => format!("tool[?]: {}", a.summary),
+                },
             })
             .collect();
         Some(lines.join("\n"))
@@ -313,5 +316,53 @@ mod tests {
             .build()
         };
         assert_eq!(build(), build());
+    }
+
+    #[test]
+    fn memory_system_prompt_tool_line_format() {
+        use crate::memory::{ActionKind, Memory, RecentAction};
+
+        let memory = Arc::new(Memory::open_in_memory().unwrap());
+        memory
+            .append_action(&RecentAction {
+                ts: "2026-01-01T00:00:00.000Z".into(),
+                kind: ActionKind::Tool,
+                summary: "list_directory: success".into(),
+                detail_json: None,
+            })
+            .unwrap();
+
+        let prompt = MemorySystemPrompt::new(None, memory);
+        let activity = prompt.format_recent_activity().unwrap();
+        assert_eq!(activity, "tool[list_directory]: success");
+    }
+
+    #[test]
+    fn memory_system_prompt_mixed_kinds_formatting() {
+        use crate::memory::{ActionKind, Memory, RecentAction};
+
+        let memory = Arc::new(Memory::open_in_memory().unwrap());
+        for (kind, summary) in [
+            (ActionKind::UserInput, "hello"),
+            (ActionKind::Assistant, "hi there"),
+            (ActionKind::Tool, "read_file: failed"),
+        ] {
+            memory
+                .append_action(&RecentAction {
+                    ts: "2026-01-01T00:00:00.000Z".into(),
+                    kind,
+                    summary: summary.into(),
+                    detail_json: None,
+                })
+                .unwrap();
+        }
+
+        let prompt = MemorySystemPrompt::new(None, memory);
+        let activity = prompt.format_recent_activity().unwrap();
+        let lines: Vec<&str> = activity.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "user: hello");
+        assert_eq!(lines[1], "assistant: hi there");
+        assert_eq!(lines[2], "tool[read_file]: failed");
     }
 }
