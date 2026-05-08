@@ -108,4 +108,21 @@ mod tests {
         f.write_all(&[0xFF, 0xFE, 0x00, 0x01]).unwrap();
         assert!(load_agents_md_from(&path).is_none());
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_file_returns_none() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("AGENTS.md");
+        std::fs::write(&path, "secret persona").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = load_agents_md_from(&path);
+
+        // Restore perms so tempdir cleanup can remove the file.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(result.is_none());
+    }
 }
