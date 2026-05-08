@@ -7,15 +7,16 @@ const PROBED_TOOLS: &[&str] = &[
     "make", "gcc", "clang", "ssh", "curl", "wget", "jq", "fd", "rg", "fzf",
 ];
 
-pub struct DetectedTool {
+pub(crate) struct DetectedTool {
     pub name: String,
     pub version: Option<String>,
 }
 
-pub struct Identity {
+pub(crate) struct Identity {
     host: String,
     os_name: String,
     os_version: String,
+    kernel: String,
     arch: String,
     user: String,
     uid_suffix: String,
@@ -23,7 +24,16 @@ pub struct Identity {
     shell: Option<String>,
 }
 
-pub struct Hardware {
+impl Identity {
+    fn os_full(&self) -> String {
+        format!(
+            "{} {} ({} {})",
+            self.os_name, self.os_version, self.kernel, self.arch
+        )
+    }
+}
+
+pub(crate) struct Hardware {
     cpu_cores: usize,
     cpu_brand: String,
     ram_total_bytes: u64,
@@ -41,7 +51,7 @@ pub struct MachineAudit {
 }
 
 impl MachineAudit {
-    pub fn capture() -> Self {
+    fn capture() -> Self {
         let written_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
         let identity = capture_identity();
@@ -68,10 +78,7 @@ impl MachineAudit {
         out.push('\n');
         out.push_str("## Identity\n");
         out.push_str(&format!("host: {}\n", self.identity.host));
-        out.push_str(&format!(
-            "os: {} {} ({})\n",
-            self.identity.os_name, self.identity.os_version, self.identity.arch
-        ));
+        out.push_str(&format!("os: {}\n", self.identity.os_full()));
         let user_line = if self.identity.uid_suffix.is_empty() {
             format!("user: {}\n", self.identity.user)
         } else {
@@ -137,10 +144,7 @@ impl MachineAudit {
         let mut lines = Vec::new();
         lines.push("machine audit:".to_string());
         lines.push(format!("  host: {}", self.identity.host));
-        lines.push(format!(
-            "  os: {} {} ({})",
-            self.identity.os_name, self.identity.os_version, self.identity.arch
-        ));
+        lines.push(format!("  os: {}", self.identity.os_full()));
         lines.push(format!("  user: {}", self.identity.user));
         lines.push(format!(
             "  cpu: {} cores ({})",
@@ -159,14 +163,12 @@ impl MachineAudit {
 
     pub fn into_init_audit(self) -> InitAudit {
         let summary_md = self.render_markdown();
+        let os = self.identity.os_full();
         InitAudit {
             written_at: self.written_at,
             host: self.identity.host,
-            os: format!(
-                "{} {} {}",
-                self.identity.os_name, self.identity.os_version, self.identity.arch
-            ),
-            kernel: sysinfo::System::kernel_version().unwrap_or_else(|| "unknown".into()),
+            os,
+            kernel: self.identity.kernel,
             user: self.identity.user,
             home: self.identity.home,
             shell: self.identity.shell,
@@ -179,10 +181,7 @@ impl MachineAudit {
     }
 
     pub fn identity_os(&self) -> String {
-        format!(
-            "{} {} {}",
-            self.identity.os_name, self.identity.os_version, self.identity.arch
-        )
+        self.identity.os_full()
     }
 
     pub fn identity_user(&self) -> &str {
@@ -216,6 +215,7 @@ impl Identity {
         host: String,
         os_name: String,
         os_version: String,
+        kernel: String,
         arch: String,
         user: String,
         uid_suffix: String,
@@ -226,6 +226,7 @@ impl Identity {
             host,
             os_name,
             os_version,
+            kernel,
             arch,
             user,
             uid_suffix,
@@ -262,6 +263,7 @@ fn capture_identity() -> Identity {
     let host = sysinfo::System::host_name().unwrap_or_else(|| "unknown".into());
     let os_name = sysinfo::System::name().unwrap_or_else(|| "unknown".into());
     let os_version = sysinfo::System::os_version().unwrap_or_else(|| "unknown".into());
+    let kernel = sysinfo::System::kernel_version().unwrap_or_else(|| "unknown".into());
     let arch = sysinfo::System::cpu_arch().unwrap_or_else(|| "unknown".into());
 
     let user = std::env::var("USER")
@@ -269,6 +271,7 @@ fn capture_identity() -> Identity {
         .unwrap_or_else(|_| "unknown".into());
 
     #[cfg(unix)]
+    // POSIX getuid is always safe: no preconditions, never fails, thread-safe.
     let uid_suffix = format!("uid {}", unsafe { libc::getuid() });
     #[cfg(not(unix))]
     let uid_suffix = String::new();
@@ -286,6 +289,7 @@ fn capture_identity() -> Identity {
         host,
         os_name,
         os_version,
+        kernel,
         arch,
         user,
         uid_suffix,
@@ -327,6 +331,15 @@ fn capture_hardware(home: &str) -> Hardware {
     }
 }
 
+fn probe_arg(name: &str) -> &'static str {
+    match name {
+        // ssh writes a usage banner to stderr and exits 255 on `--version`.
+        // `-V` prints `OpenSSH_x.y, LibreSSL z.w` to stderr and exits 0.
+        "ssh" => "-V",
+        _ => "--version",
+    }
+}
+
 async fn probe_single_tool(name: &str) -> Option<DetectedTool> {
     use std::time::Duration;
     use tokio::process::Command;
@@ -334,7 +347,7 @@ async fn probe_single_tool(name: &str) -> Option<DetectedTool> {
 
     let result = timeout(
         Duration::from_secs(1),
-        Command::new(name).arg("--version").output(),
+        Command::new(name).arg(probe_arg(name)).output(),
     )
     .await;
 
@@ -364,6 +377,11 @@ async fn probe_single_tool(name: &str) -> Option<DetectedTool> {
     })
 }
 
+// Picks the first digit-dot-digit substring. This is correct for our probed
+// tools, which emit `<name> <version>` as the leading text. If a tool ever
+// prefixes its version with an unrelated number (e.g., an OS string), this
+// will pick the wrong one — accept that for now; the alternative is per-tool
+// version regexes, not worth the maintenance.
 fn extract_version(line: &str) -> Option<String> {
     use regex::Regex;
     // Lazy static would be ideal but we avoid extra deps; compile on each call (only ~20 calls total).
@@ -412,6 +430,7 @@ mod tests {
                 "macbook-pro.local".into(),
                 "macOS".into(),
                 "25.3.0".into(),
+                "Darwin".into(),
                 "arm64".into(),
                 "swoelffel".into(),
                 "uid 501".into(),
@@ -463,10 +482,22 @@ mod tests {
         let audit = make_test_audit();
         let md = audit.render_markdown();
         assert!(md.contains("host: macbook-pro.local"));
-        assert!(md.contains("os: macOS 25.3.0 (arm64)"));
+        assert!(md.contains("os: macOS 25.3.0 (Darwin arm64)"));
         assert!(md.contains("user: swoelffel (uid 501)"));
         assert!(md.contains("home: /Users/swoelffel"));
         assert!(md.contains("shell: /bin/zsh"));
+    }
+
+    #[test]
+    fn identity_os_matches_render_markdown_os_line() {
+        let audit = make_test_audit();
+        let md = audit.render_markdown();
+        let os_line = md
+            .lines()
+            .find(|l| l.starts_with("os: "))
+            .expect("no os: line");
+        let os_in_md = os_line.trim_start_matches("os: ");
+        assert_eq!(audit.identity_os(), os_in_md);
     }
 
     #[test]
@@ -503,6 +534,7 @@ mod tests {
                 "host".into(),
                 "Linux".into(),
                 "6.1".into(),
+                "Linux".into(),
                 "x86_64".into(),
                 "alice".into(),
                 String::new(),
@@ -597,6 +629,27 @@ mod tests {
         assert!(tool.version.is_some(), "git version should be extractable");
         let v = tool.version.unwrap();
         assert!(!v.is_empty(), "git version should not be empty");
+    }
+
+    #[tokio::test]
+    async fn probe_ssh_returns_version() {
+        let result = probe_single_tool("ssh").await;
+        assert!(result.is_some(), "ssh should be detected via -V");
+        let tool = result.unwrap();
+        assert_eq!(tool.name, "ssh");
+        assert!(
+            tool.version.is_some(),
+            "ssh version should be extractable from -V output"
+        );
+        let v = tool.version.unwrap();
+        assert!(!v.is_empty(), "ssh version should not be empty");
+    }
+
+    #[test]
+    fn probe_arg_overrides() {
+        assert_eq!(probe_arg("ssh"), "-V");
+        assert_eq!(probe_arg("git"), "--version");
+        assert_eq!(probe_arg("cargo"), "--version");
     }
 
     #[tokio::test]
