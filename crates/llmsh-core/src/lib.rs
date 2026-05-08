@@ -8,6 +8,7 @@ pub mod init;
 pub mod input;
 pub mod llm_redact;
 pub mod memory;
+pub mod model_cmd;
 pub mod pipeline;
 pub mod plan;
 pub mod raw_shell;
