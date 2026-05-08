@@ -36,8 +36,8 @@ impl CheckedPlan {
         })
     }
     pub fn has_deny(&self) -> bool {
-        self.steps.iter().any(|s| {
-            matches!(s.decision.action, llmsh_policy::types::PolicyAction::Deny)
-        })
+        self.steps
+            .iter()
+            .any(|s| matches!(s.decision.action, llmsh_policy::types::PolicyAction::Deny))
     }
 }
