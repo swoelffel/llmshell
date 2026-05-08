@@ -2,7 +2,7 @@ use crate::executor::StepResult;
 use crate::llm_redact::LlmRedactor;
 use crate::memory::{ActionKind, Memory};
 use crate::sysctx::RuntimeContext;
-use llmsh_llm::types::{Message, MessageRole};
+use llmsh_llm::types::{Message, MessageRole, ToolCall};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -182,6 +182,7 @@ impl ContextBuilder {
             content: red,
             tool_call_id: None,
             name: None,
+            tool_calls: None,
         });
     }
 
@@ -192,6 +193,7 @@ impl ContextBuilder {
             content: red,
             tool_call_id: None,
             name: None,
+            tool_calls: None,
         });
     }
 
@@ -221,8 +223,28 @@ impl ContextBuilder {
                 content: clipped,
                 tool_call_id: Some(r.step_id.clone()),
                 name: Some(r.tool_name.clone()),
+                tool_calls: None,
             });
         }
+    }
+
+    pub fn append_assistant_with_tool_calls(
+        &mut self,
+        text: Option<&str>,
+        tool_calls: Vec<ToolCall>,
+    ) {
+        let content = text.map(|t| self.redactor.redact(t).0).unwrap_or_default();
+        self.messages.push(Message {
+            role: MessageRole::Assistant,
+            content,
+            tool_call_id: None,
+            name: None,
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+        });
     }
 
     pub fn append_user_cancellation(&mut self) {
@@ -231,6 +253,7 @@ impl ContextBuilder {
             content: "User cancelled the proposed action.".into(),
             tool_call_id: None,
             name: None,
+            tool_calls: None,
         });
     }
 
@@ -243,6 +266,7 @@ impl ContextBuilder {
             content: body.to_string(),
             tool_call_id: Some(tool_call_id.into()),
             name: None,
+            tool_calls: None,
         });
     }
 }
@@ -259,6 +283,49 @@ fn status_str(s: &crate::executor::ExecutionStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn append_assistant_with_tool_calls_then_tool_results_orders_correctly() {
+        use crate::executor::{ExecutionStatus, StepResult};
+        use llmsh_llm::types::ToolCall;
+        use llmsh_tools::tool::ToolOutput;
+        use serde_json::json;
+        use std::time::Duration;
+
+        let mut b = ContextBuilder::new(4096);
+        b.append_user("list");
+        b.append_assistant_with_tool_calls(
+            None,
+            vec![ToolCall {
+                id: "call_x".into(),
+                name: "list_directory".into(),
+                args: json!({"path": "."}),
+            }],
+        );
+        b.append_tool_results(&[StepResult {
+            step_id: "call_x".into(),
+            tool_name: "list_directory".into(),
+            status: ExecutionStatus::Success,
+            output: Some(ToolOutput {
+                stdout: "ok".into(),
+                stderr: None,
+                exit_code: Some(0),
+                truncated: false,
+                structured: None,
+            }),
+            error: None,
+            duration: Duration::from_millis(1),
+        }]);
+
+        assert_eq!(b.messages.len(), 3);
+        assert_eq!(b.messages[0].role, MessageRole::User);
+        assert_eq!(b.messages[1].role, MessageRole::Assistant);
+        let tcs = b.messages[1].tool_calls.as_ref().unwrap();
+        assert_eq!(tcs.len(), 1);
+        assert_eq!(tcs[0].id, "call_x");
+        assert_eq!(b.messages[2].role, MessageRole::Tool);
+        assert_eq!(b.messages[2].tool_call_id.as_deref(), Some("call_x"));
+    }
 
     #[test]
     fn only_persona_no_headers() {

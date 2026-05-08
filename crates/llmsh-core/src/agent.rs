@@ -216,10 +216,26 @@ impl AgentLoop {
                         });
                     }
 
+                    // Snapshot the assistant turn so the wire payload includes
+                    // the assistant message with tool_calls — required by
+                    // OpenAI: every `tool` role message must follow such an
+                    // assistant message.
+                    let assistant_text = resp.message.clone();
+                    let assistant_tool_calls = resp.tool_calls.clone();
+
                     let model_plan = ModelPlan::from(resp);
                     let outcome =
                         dep.pipeline
                             .check(model_plan, &dep.policy_ctx, &dep.sensitive_patterns);
+
+                    // Append the assistant turn that triggered the tool calls,
+                    // before any `tool` messages get appended (either via
+                    // schema-repair or via execution). OpenAI requires this
+                    // ordering on the wire.
+                    self.builder.append_assistant_with_tool_calls(
+                        assistant_text.as_deref(),
+                        assistant_tool_calls.clone(),
+                    );
 
                     if !outcome.schema_errors.is_empty()
                         && schema_attempts < dep.bounds.max_schema_repair_attempts

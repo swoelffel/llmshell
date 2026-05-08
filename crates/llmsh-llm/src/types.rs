@@ -25,6 +25,11 @@ pub struct Message {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// For assistant messages that requested tool calls. Mirrored to the wire
+    /// so the provider sees the assistant turn that triggered the subsequent
+    /// `tool` messages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -95,6 +100,7 @@ mod tests {
             content: "hi".into(),
             tool_call_id: None,
             name: None,
+            tool_calls: None,
         };
         let s = serde_json::to_string(&m).unwrap();
         let back: Message = serde_json::from_str(&s).unwrap();
