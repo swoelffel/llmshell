@@ -4,7 +4,7 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn list_models_returns_filtered_chat_models() {
+async fn list_models_returns_all_models_unfiltered() {
     let server = MockServer::start().await;
 
     let fixture = serde_json::json!({
