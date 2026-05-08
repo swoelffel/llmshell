@@ -9,8 +9,9 @@ use llmsh_core::config::load::{load_or_create_user, load_project, user_config_pa
 use llmsh_core::config::merge::merge_project;
 use llmsh_core::config::Config;
 use llmsh_core::confirm::StdinConfirmationGate;
-use llmsh_core::context::StaticSystemPrompt;
+use llmsh_core::context::MemorySystemPrompt;
 use llmsh_core::executor::ToolExecutor;
+use llmsh_core::memory::Memory;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
 use llmsh_core::repl::{Repl, ReplState};
@@ -141,9 +142,19 @@ async fn main() -> anyhow::Result<()> {
         cancel: cancel.clone(),
     };
 
-    // 6. Agent deps
+    // 6. Memory
+    let memory_path = if let Ok(v) = std::env::var("LLMSH_MEMORY_DB") {
+        PathBuf::from(v)
+    } else {
+        directories::ProjectDirs::from("", "", "llmsh")
+            .map(|d| d.data_dir().join("memory.db"))
+            .ok_or_else(|| anyhow::anyhow!("could not determine data dir for memory.db"))?
+    };
+    let memory = Arc::new(Memory::open(&memory_path)?);
+
+    // 7. Agent deps
     let agents_md = load_agents_md();
-    let system_prompt = Arc::new(StaticSystemPrompt::new(agents_md));
+    let system_prompt = Arc::new(MemorySystemPrompt::new(agents_md, memory.clone()));
     let deps = Arc::new(AgentDeps {
         provider,
         pipeline,
@@ -160,6 +171,7 @@ async fn main() -> anyhow::Result<()> {
         sensitive_patterns: cfg.policy.sensitive_paths.patterns.clone(),
         model_label: cfg.default_model.clone(),
         system_prompt,
+        memory,
     });
 
     let repl = Repl {

@@ -1,6 +1,8 @@
 use crate::executor::StepResult;
 use crate::llm_redact::LlmRedactor;
+use crate::memory::{ActionKind, Memory};
 use llmsh_llm::types::{Message, MessageRole};
+use std::sync::Arc;
 
 pub const DEFAULT_PERSONA: &str = "\
 You are LLMShell, an agentic shell assistant installed on this machine. \
@@ -91,6 +93,48 @@ impl SystemPromptSource for StaticSystemPrompt {
             ..SystemPromptBuilder::new()
         }
         .build()
+    }
+}
+
+pub struct MemorySystemPrompt {
+    agents_md: Option<String>,
+    memory: Arc<Memory>,
+}
+
+impl MemorySystemPrompt {
+    pub fn new(agents_md: Option<String>, memory: Arc<Memory>) -> Self {
+        Self { agents_md, memory }
+    }
+
+    fn format_recent_activity(&self) -> Option<String> {
+        let actions = self.memory.last_actions(3).ok()?;
+        if actions.is_empty() {
+            return None;
+        }
+        let lines: Vec<String> = actions
+            .iter()
+            .map(|a| match a.kind {
+                ActionKind::UserInput => format!("user: {}", a.summary),
+                ActionKind::Assistant => format!("assistant: {}", a.summary),
+                ActionKind::Tool => format!("tool: {}", a.summary),
+            })
+            .collect();
+        Some(lines.join("\n"))
+    }
+}
+
+impl SystemPromptSource for MemorySystemPrompt {
+    fn current(&self) -> String {
+        let mut b = SystemPromptBuilder::new();
+        b.agents_md = self.agents_md.clone();
+        b.long_term_memory = self
+            .memory
+            .read_init_audit()
+            .ok()
+            .flatten()
+            .map(|a| a.summary_md);
+        b.recent_activity = self.format_recent_activity();
+        b.build()
     }
 }
 
