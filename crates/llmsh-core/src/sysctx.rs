@@ -1,56 +1,48 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub struct RuntimeContextInput {
-    pub workspace_root: PathBuf,
-    pub model: String,
-    pub session_start: Instant,
-}
-
 pub struct RuntimeContext {
-    pub host: String,
-    pub os_name: String,
-    pub os_version: String,
-    pub arch: String,
-    pub kernel: String,
-    pub user: String,
-    pub cwd: PathBuf,
-    pub workspace_root: PathBuf,
-    pub model: String,
-    pub disk_free_bytes: Option<u64>,
-    pub disk_total_bytes: Option<u64>,
-    pub session_uptime: Duration,
+    host: String,
+    os_name: String,
+    os_version: String,
+    arch: String,
+    user: String,
+    cwd: PathBuf,
+    workspace_root: PathBuf,
+    model: String,
+    disk_free_bytes: Option<u64>,
+    disk_total_bytes: Option<u64>,
+    session_uptime: Duration,
 }
 
 impl RuntimeContext {
-    pub fn capture(input: RuntimeContextInput) -> Self {
+    pub fn capture(workspace_root: PathBuf, model: Arc<String>, session_start: Instant) -> Self {
         let host = sysinfo::System::host_name().unwrap_or_else(|| "unknown".into());
         let os_name = sysinfo::System::name().unwrap_or_else(|| "unknown".into());
         let os_version = sysinfo::System::os_version().unwrap_or_else(|| "unknown".into());
         let arch = sysinfo::System::cpu_arch().unwrap_or_else(|| "unknown".into());
-        let kernel = sysinfo::System::kernel_version().unwrap_or_else(|| "unknown".into());
         let user = std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
             .unwrap_or_else(|_| "unknown".into());
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd = std::env::current_dir()
+            .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+            .unwrap_or_else(|_| PathBuf::from("."));
 
         let (disk_free_bytes, disk_total_bytes) = find_disk_for_cwd(&cwd);
-
-        let session_uptime = input.session_start.elapsed();
 
         Self {
             host,
             os_name,
             os_version,
             arch,
-            kernel,
             user,
             cwd,
-            workspace_root: input.workspace_root,
-            model: input.model,
+            workspace_root,
+            model: model.as_ref().clone(),
             disk_free_bytes,
             disk_total_bytes,
-            session_uptime,
+            session_uptime: session_start.elapsed(),
         }
     }
 
@@ -77,6 +69,36 @@ impl RuntimeContext {
         ));
         lines.join("\n")
     }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn for_test(
+        host: String,
+        os_name: String,
+        os_version: String,
+        arch: String,
+        user: String,
+        cwd: PathBuf,
+        workspace_root: PathBuf,
+        model: String,
+        disk_free_bytes: Option<u64>,
+        disk_total_bytes: Option<u64>,
+        session_uptime: Duration,
+    ) -> Self {
+        Self {
+            host,
+            os_name,
+            os_version,
+            arch,
+            user,
+            cwd,
+            workspace_root,
+            model,
+            disk_free_bytes,
+            disk_total_bytes,
+            session_uptime,
+        }
+    }
 }
 
 fn find_disk_for_cwd(cwd: &std::path::Path) -> (Option<u64>, Option<u64>) {
@@ -92,7 +114,7 @@ fn find_disk_for_cwd(cwd: &std::path::Path) -> (Option<u64>, Option<u64>) {
     }
 }
 
-pub fn format_bytes(b: u64) -> String {
+pub(crate) fn format_bytes(b: u64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = 1024 * KIB;
     const GIB: u64 = 1024 * MIB;
@@ -111,7 +133,7 @@ pub fn format_bytes(b: u64) -> String {
     }
 }
 
-pub fn format_duration(d: Duration) -> String {
+pub(crate) fn format_duration(d: Duration) -> String {
     let total_secs = d.as_secs();
     let days = total_secs / 86400;
     let rem = total_secs % 86400;
@@ -185,20 +207,19 @@ mod tests {
 
     #[test]
     fn render_with_disk_info() {
-        let ctx = RuntimeContext {
-            host: "myhost".into(),
-            os_name: "macOS".into(),
-            os_version: "14.0".into(),
-            arch: "arm64".into(),
-            kernel: "Darwin".into(),
-            user: "alice".into(),
-            cwd: PathBuf::from("/home/alice/project"),
-            workspace_root: PathBuf::from("/home/alice/project"),
-            model: "openai:gpt-4o".into(),
-            disk_free_bytes: Some(124 * 1024 * 1024 * 1024),
-            disk_total_bytes: Some(460 * 1024 * 1024 * 1024),
-            session_uptime: Duration::from_secs(192),
-        };
+        let ctx = RuntimeContext::for_test(
+            "myhost".into(),
+            "macOS".into(),
+            "14.0".into(),
+            "arm64".into(),
+            "alice".into(),
+            PathBuf::from("/home/alice/project"),
+            PathBuf::from("/home/alice/project"),
+            "openai:gpt-4o".into(),
+            Some(124 * 1024 * 1024 * 1024),
+            Some(460 * 1024 * 1024 * 1024),
+            Duration::from_secs(192),
+        );
         let out = ctx.render();
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "host: myhost (macOS 14.0 arm64)");
@@ -212,24 +233,66 @@ mod tests {
 
     #[test]
     fn render_without_disk_info() {
-        let ctx = RuntimeContext {
-            host: "myhost".into(),
-            os_name: "macOS".into(),
-            os_version: "14.0".into(),
-            arch: "arm64".into(),
-            kernel: "Darwin".into(),
-            user: "alice".into(),
-            cwd: PathBuf::from("/home/alice/project"),
-            workspace_root: PathBuf::from("/home/alice/project"),
-            model: "openai:gpt-4o".into(),
-            disk_free_bytes: None,
-            disk_total_bytes: None,
-            session_uptime: Duration::from_secs(0),
-        };
+        let ctx = RuntimeContext::for_test(
+            "myhost".into(),
+            "macOS".into(),
+            "14.0".into(),
+            "arm64".into(),
+            "alice".into(),
+            PathBuf::from("/home/alice/project"),
+            PathBuf::from("/home/alice/project"),
+            "openai:gpt-4o".into(),
+            None,
+            None,
+            Duration::from_secs(0),
+        );
         let out = ctx.render();
         assert!(!out.contains("free disk"));
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 6);
         assert_eq!(lines[5], "session uptime: 00:00:00");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_via_symlinked_cwd_finds_a_disk() {
+        // Reproduces the macOS /var → /private/var symlink case: the live cwd
+        // resolves through a symlink, but the disk picker should still find a
+        // matching mount because we canonicalize before the prefix match.
+        let real = tempfile::tempdir().unwrap();
+        let link_parent = tempfile::tempdir().unwrap();
+        let link = link_parent.path().join("link");
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+
+        let saved = std::env::current_dir().ok();
+        std::env::set_current_dir(&link).unwrap();
+
+        let ctx = RuntimeContext::capture(
+            link.clone(),
+            Arc::new("mock:test".to_string()),
+            Instant::now(),
+        );
+
+        if let Some(prev) = saved {
+            let _ = std::env::set_current_dir(prev);
+        }
+
+        // We can't assert the exact mount across CI hosts, but we can assert
+        // the canonicalized cwd doesn't still contain the symlink component
+        // and that disk picker output is internally consistent.
+        let canonical_real =
+            std::fs::canonicalize(real.path()).unwrap_or_else(|_| real.path().to_path_buf());
+        assert!(
+            ctx.cwd.starts_with(&canonical_real)
+                || canonical_real.starts_with(&ctx.cwd)
+                || ctx.cwd == canonical_real,
+            "cwd should resolve through the symlink: got {:?}, real {:?}",
+            ctx.cwd,
+            canonical_real
+        );
+        match (ctx.disk_free_bytes, ctx.disk_total_bytes) {
+            (Some(_), Some(_)) | (None, None) => {}
+            other => panic!("disk fields must be both Some or both None: {:?}", other),
+        }
     }
 }

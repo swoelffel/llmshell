@@ -1,7 +1,7 @@
 use crate::executor::StepResult;
 use crate::llm_redact::LlmRedactor;
 use crate::memory::{ActionKind, Memory};
-use crate::sysctx::{RuntimeContext, RuntimeContextInput};
+use crate::sysctx::RuntimeContext;
 use llmsh_llm::types::{Message, MessageRole};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -109,6 +109,7 @@ impl MemorySystemPrompt {
         model: Arc<String>,
         session_start: Instant,
     ) -> Self {
+        let workspace_root = std::fs::canonicalize(&workspace_root).unwrap_or(workspace_root);
         Self {
             agents_md,
             memory,
@@ -148,11 +149,11 @@ impl SystemPromptSource for MemorySystemPrompt {
             .ok()
             .flatten()
             .map(|a| a.summary_md);
-        let rt = RuntimeContext::capture(RuntimeContextInput {
-            workspace_root: self.workspace_root.clone(),
-            model: self.model.as_ref().clone(),
-            session_start: self.session_start,
-        });
+        let rt = RuntimeContext::capture(
+            self.workspace_root.clone(),
+            self.model.clone(),
+            self.session_start,
+        );
         b.runtime_context = Some(rt.render());
         b.recent_activity = self.format_recent_activity();
         b.build()
