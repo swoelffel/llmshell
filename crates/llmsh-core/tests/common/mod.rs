@@ -3,8 +3,8 @@ use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_core::agent::{AgentBounds, AgentDeps};
 use llmsh_core::confirm::AlwaysYesGate;
-use llmsh_core::context::StaticSystemPrompt;
 use llmsh_core::executor::ToolExecutor;
+use llmsh_core::memory::Memory;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_llm::capabilities::{Capabilities, ToolCallingMode};
 use llmsh_llm::provider::LlmProvider;
@@ -92,6 +92,30 @@ pub fn build_test_deps_with_agents_md(
     sensitive_patterns: Vec<String>,
     agents_md: Option<String>,
 ) -> (Arc<AgentDeps>, Arc<MockLlmProvider>) {
+    build_test_deps_with_memory(
+        registry,
+        responses,
+        gate,
+        audit_dir,
+        policy_ctx,
+        sensitive_patterns,
+        agents_md,
+        Arc::new(Memory::open_in_memory().unwrap()),
+    )
+}
+
+/// Full variant that also accepts a pre-opened `Memory` (for persistence tests).
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn build_test_deps_with_memory(
+    registry: Arc<ToolRegistry>,
+    responses: Vec<LlmResponse>,
+    gate: Arc<dyn llmsh_core::confirm::ConfirmationGate>,
+    audit_dir: &std::path::Path,
+    policy_ctx: PolicyContext,
+    sensitive_patterns: Vec<String>,
+    agents_md: Option<String>,
+    memory: Arc<Memory>,
+) -> (Arc<AgentDeps>, Arc<MockLlmProvider>) {
     let provider = Arc::new(MockLlmProvider::new(responses));
     let policy = Arc::new(DefaultPolicyEngine::new(DefaultPolicyConfig::default()));
     let pipeline = Pipeline {
@@ -100,6 +124,10 @@ pub fn build_test_deps_with_agents_md(
         home: None,
     };
     let writer = AuditWriter::open(audit_dir, "test-session").unwrap();
+    let system_prompt = Arc::new(llmsh_core::context::MemorySystemPrompt::new(
+        agents_md,
+        memory.clone(),
+    ));
     let deps = Arc::new(AgentDeps {
         provider: provider.clone(),
         pipeline,
@@ -121,7 +149,8 @@ pub fn build_test_deps_with_agents_md(
         policy_ctx,
         sensitive_patterns,
         model_label: "mock:test".into(),
-        system_prompt: Arc::new(StaticSystemPrompt::new(agents_md)),
+        system_prompt,
+        memory,
     });
     (deps, provider)
 }

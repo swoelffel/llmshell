@@ -7,6 +7,7 @@ use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
 use llmsh_core::confirm::AlwaysYesGate;
 use llmsh_core::context::{ContextBuilder, StaticSystemPrompt};
 use llmsh_core::executor::ToolExecutor;
+use llmsh_core::memory::Memory;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_llm::types::{FinishReason, LlmResponse, ToolCall};
 use llmsh_policy::context::PolicyContext;
@@ -86,6 +87,7 @@ async fn max_iterations_stops_loop() {
         sensitive_patterns: vec![],
         model_label: "mock:test".into(),
         system_prompt: Arc::new(StaticSystemPrompt::new(None)),
+        memory: Arc::new(Memory::open_in_memory().unwrap()),
     });
 
     let mut agent = AgentLoop {

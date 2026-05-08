@@ -71,6 +71,7 @@ async fn redaction_no_literal_secrets_in_audit() {
         use llmsh_core::confirm::AlwaysYesGate;
         use llmsh_core::context::StaticSystemPrompt;
         use llmsh_core::executor::ToolExecutor;
+        use llmsh_core::memory::Memory;
         use llmsh_core::pipeline::Pipeline;
         use llmsh_policy::context::PolicyContext;
         use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine};
@@ -111,6 +112,7 @@ async fn redaction_no_literal_secrets_in_audit() {
             sensitive_patterns: vec![],
             model_label: "mock:test".into(),
             system_prompt: Arc::new(StaticSystemPrompt::new(None)),
+            memory: Arc::new(Memory::open_in_memory().unwrap()),
         })
     };
 
