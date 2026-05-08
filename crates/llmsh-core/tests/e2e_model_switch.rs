@@ -101,6 +101,7 @@ async fn set_model_flow_updates_shared_label() {
         cache: &cache,
         config_path: None,
         audit: &audit,
+        model_provider_prefix: None,
     };
 
     set_model_flow(&ctx, "gpt-4o").await.unwrap();
@@ -128,6 +129,7 @@ async fn set_model_flow_unknown_model_prints_error() {
         cache: &cache,
         config_path: None,
         audit: &audit,
+        model_provider_prefix: None,
     };
 
     let before = model_label.read().unwrap().clone();
@@ -239,6 +241,7 @@ async fn rendered_system_prompt_reflects_model_switch() {
         cache: &cache,
         config_path: None,
         audit: &deps.audit,
+        model_provider_prefix: None,
     };
     set_model_flow(&ctx, "gpt-4o").await.unwrap();
 
@@ -263,5 +266,60 @@ async fn rendered_system_prompt_reflects_model_switch() {
         !second_system.contains("model: gpt-4o-mini"),
         "old model id must not appear after switch, got:\n{}",
         second_system
+    );
+}
+
+#[tokio::test]
+async fn set_model_flow_persists_with_provider_prefix() {
+    let tmp_audit = tempfile::tempdir().unwrap();
+    let cfg_dir = tempfile::tempdir().unwrap();
+    let cfg_path = cfg_dir.path().join("config.toml");
+    let original = r#"# user config
+default_model = "openai:gpt-4o-mini"
+
+[providers.openai]
+api_key_env = "OPENAI_API_KEY"
+base_url = "https://api.openai.com/v1"
+tool_calling = "native"
+"#;
+    std::fs::write(&cfg_path, original).unwrap();
+
+    // The runtime label holds only the bare id (matches what build_provider produces).
+    let model_label = Arc::new(RwLock::new("gpt-4o-mini".to_string()));
+    let provider = MockModelProvider {
+        model: model_label.clone(),
+        scripted: Mutex::new(vec![]),
+        captured: Mutex::new(vec![]),
+    };
+    let writer = AuditWriter::open(tmp_audit.path(), "test-persist-prefix").unwrap();
+    let audit = Mutex::new(writer);
+    let cache = ModelListCache::new();
+
+    let ctx = ModelCommandContext {
+        provider: &provider,
+        model_label: &model_label,
+        cache: &cache,
+        config_path: Some(cfg_path.as_path()),
+        audit: &audit,
+        model_provider_prefix: Some("openai".into()),
+    };
+
+    set_model_flow(&ctx, "gpt-4o").await.unwrap();
+
+    let result = std::fs::read_to_string(&cfg_path).unwrap();
+    assert!(
+        result.contains("default_model = \"openai:gpt-4o\""),
+        "must persist with provider prefix, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("# user config"),
+        "comment must be preserved, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("api_key_env = \"OPENAI_API_KEY\""),
+        "provider section must be preserved, got:\n{}",
+        result
     );
 }

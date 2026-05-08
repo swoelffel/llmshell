@@ -128,6 +128,9 @@ pub struct ModelCommandContext<'a> {
     pub cache: &'a ModelListCache,
     pub config_path: Option<&'a Path>,
     pub audit: &'a std::sync::Mutex<llmsh_audit::writer::AuditWriter>,
+    /// Provider prefix (e.g. `"openai"`) re-prepended when persisting `default_model`
+    /// in config.toml. The runtime `model_label` only holds the bare id.
+    pub model_provider_prefix: Option<String>,
 }
 
 pub async fn handle_model_command(
@@ -255,41 +258,32 @@ pub async fn set_model_flow(ctx: &ModelCommandContext<'_>, id: &str) -> anyhow::
 
     ctx.provider.set_model(id).await?;
 
+    let _ = ctx
+        .audit
+        .lock()
+        .unwrap()
+        .write(&llmsh_audit::event::AuditEvent::ModelChanged {
+            ts: llmsh_audit::event::now_iso(),
+            from: from.clone(),
+            to: id.to_string(),
+        });
+
     if let Some(path) = ctx.config_path {
-        let stored_id = build_stored_id(&from, id);
+        let stored_id = build_stored_id(ctx.model_provider_prefix.as_deref(), id);
         crate::config::persist::set_default_model(path, &stored_id)
             .with_context(|| format!("persist model to {}", path.display()))?;
-        let _ = ctx
-            .audit
-            .lock()
-            .unwrap()
-            .write(&llmsh_audit::event::AuditEvent::ModelChanged {
-                ts: llmsh_audit::event::now_iso(),
-                from: from.clone(),
-                to: id.to_string(),
-            });
         println!("model set to {} (persisted to {})", id, path.display());
     } else {
-        let _ = ctx
-            .audit
-            .lock()
-            .unwrap()
-            .write(&llmsh_audit::event::AuditEvent::ModelChanged {
-                ts: llmsh_audit::event::now_iso(),
-                from: from.clone(),
-                to: id.to_string(),
-            });
         println!("model set to {}", id);
     }
 
     Ok(())
 }
 
-fn build_stored_id(from: &str, model_id: &str) -> String {
-    if let Some((prefix, _)) = from.split_once(':') {
-        format!("{}:{}", prefix, model_id)
-    } else {
-        model_id.to_string()
+fn build_stored_id(prefix: Option<&str>, model_id: &str) -> String {
+    match prefix {
+        Some(p) => format!("{}:{}", p, model_id),
+        None => model_id.to_string(),
     }
 }
 
@@ -339,6 +333,11 @@ mod tests {
     #[test]
     fn levenshtein_empty_to_abc() {
         assert_eq!(levenshtein("", "abc"), 3);
+    }
+
+    #[test]
+    fn levenshtein_abc_to_empty() {
+        assert_eq!(levenshtein("abc", ""), 3);
     }
 
     #[test]
@@ -417,14 +416,11 @@ mod tests {
 
     #[test]
     fn build_stored_id_with_prefix() {
-        assert_eq!(
-            build_stored_id("openai:gpt-4o-mini", "gpt-4o"),
-            "openai:gpt-4o"
-        );
+        assert_eq!(build_stored_id(Some("openai"), "gpt-4o"), "openai:gpt-4o");
     }
 
     #[test]
     fn build_stored_id_without_prefix() {
-        assert_eq!(build_stored_id("gpt-4o-mini", "gpt-4o"), "gpt-4o");
+        assert_eq!(build_stored_id(None, "gpt-4o"), "gpt-4o");
     }
 }

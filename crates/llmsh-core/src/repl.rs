@@ -29,6 +29,7 @@ pub struct Repl {
     pub root_cancel: CancellationToken,
     pub config_path: Option<PathBuf>,
     pub model_cache: ModelListCache,
+    pub model_provider_prefix: Option<String>,
 }
 
 impl Repl {
@@ -162,6 +163,7 @@ impl Repl {
                     cache: &self.model_cache,
                     config_path: self.config_path.as_deref(),
                     audit: &self.deps.audit,
+                    model_provider_prefix: self.model_provider_prefix.clone(),
                 };
                 if let Err(e) = handle_model_command(&ctx, args).await {
                     eprintln!("model command error: {}", e);

@@ -29,7 +29,7 @@ use llmsh_tools::run_process::RunProcess;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-type ProviderWithModel = (Arc<dyn LlmProvider>, Arc<RwLock<String>>);
+type ProviderWithModel = (Arc<dyn LlmProvider>, Arc<RwLock<String>>, Option<String>);
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser, Debug)]
@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
     })?;
 
     // 3. Provider
-    let (provider, shared_model) = build_provider(&cfg)?;
+    let (provider, shared_model, provider_prefix) = build_provider(&cfg)?;
 
     // 4. Tools
     let mut registry = ToolRegistry::new();
@@ -202,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
         root_cancel: cancel,
         config_path: Some(cfg_path),
         model_cache: ModelListCache::new(),
+        model_provider_prefix: provider_prefix,
     };
     repl.run().await?;
     Ok(())
@@ -225,7 +226,7 @@ fn build_provider(cfg: &Config) -> anyhow::Result<ProviderWithModel> {
         timeout_ms: 60_000,
     })?;
     let shared = p.shared_model();
-    Ok((Arc::new(p), shared))
+    Ok((Arc::new(p), shared, Some(provider_name.to_string())))
 }
 
 fn policy_config_from(cfg: &Config) -> DefaultPolicyConfig {
