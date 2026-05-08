@@ -29,3 +29,4 @@ llmsh-llm = { path = "../llmsh-llm" }
 llmsh-llm-openai = { path = "../llmsh-llm-openai" }
 llmsh-policy = { path = "../llmsh-policy" }
 llmsh-tools = { path = "../llmsh-tools" }
+reedline = { workspace = true }

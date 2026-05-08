@@ -5,7 +5,7 @@ use crate::input::{classify, InputKind};
 use crate::model_cmd::{handle_model_command, ModelCommandContext, ModelListCache};
 use crate::raw_shell::{resolve_shell, RiskScan};
 use llmsh_audit::event::{now_iso, AuditEvent};
-use reedline::{DefaultPrompt, Reedline, Signal};
+use reedline::{Reedline, Signal};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,14 +30,14 @@ pub struct Repl {
     pub config_path: Option<PathBuf>,
     pub model_cache: ModelListCache,
     pub model_provider_prefix: Option<String>,
+    pub prompt: Box<dyn reedline::Prompt>,
 }
 
 impl Repl {
     pub async fn run(mut self) -> anyhow::Result<()> {
         let mut line_editor = Reedline::create();
-        let prompt = DefaultPrompt::default();
         loop {
-            match line_editor.read_line(&prompt)? {
+            match line_editor.read_line(self.prompt.as_ref())? {
                 Signal::Success(line) => {
                     let _ = self
                         .deps

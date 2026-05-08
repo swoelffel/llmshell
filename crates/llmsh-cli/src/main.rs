@@ -39,6 +39,9 @@ struct Cli {
     config: Option<PathBuf>,
     #[arg(long, env = "LLMSH_MODEL")]
     model: Option<String>,
+    /// Verbose output: -v = tier 1, -vv = tier 1 + tier 2.
+    #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 #[tokio::main]
@@ -69,6 +72,14 @@ async fn main() -> anyhow::Result<()> {
     if let Some(m) = cli.model {
         cfg.default_model = m;
     }
+
+    let verbose_level: u8 = if cli.verbose > 0 {
+        cli.verbose.min(2)
+    } else if let Ok(s) = std::env::var("LLMSH_VERBOSE") {
+        s.trim().parse::<u8>().unwrap_or(0).min(2)
+    } else {
+        cfg.verbose.default_level.min(2)
+    };
 
     let workspace_root = std::env::current_dir()?;
     if let Some(project) = load_project(&workspace_root)? {
@@ -169,6 +180,9 @@ async fn main() -> anyhow::Result<()> {
         shared_model.clone(),
         session_start,
     ));
+    let stats = Arc::new(RwLock::new(
+        llmsh_core::session_stats::SessionStats::default(),
+    ));
     let deps = Arc::new(AgentDeps {
         provider,
         pipeline,
@@ -186,11 +200,19 @@ async fn main() -> anyhow::Result<()> {
         model_label: shared_model.clone(),
         system_prompt,
         memory,
-        verbose: 0,
-        stats: Arc::new(std::sync::RwLock::new(
-            llmsh_core::session_stats::SessionStats::default(),
-        )),
+        verbose: verbose_level,
+        stats: stats.clone(),
     });
+
+    let prompt: Box<dyn reedline::Prompt> = if cfg.verbose.status_line {
+        Box::new(llmsh_core::status_prompt::StatusPrompt::new(
+            shared_model.clone(),
+            stats.clone(),
+            true,
+        ))
+    } else {
+        Box::new(reedline::DefaultPrompt::default())
+    };
 
     let repl = Repl {
         deps,
@@ -207,6 +229,7 @@ async fn main() -> anyhow::Result<()> {
         config_path: Some(cfg_path),
         model_cache: ModelListCache::new(),
         model_provider_prefix: provider_prefix,
+        prompt,
     };
     repl.run().await?;
     Ok(())

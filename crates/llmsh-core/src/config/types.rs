@@ -10,6 +10,8 @@ pub struct Config {
     pub limits: LimitsConfig,
     pub policy: PolicyConfig,
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub verbose: VerboseConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +81,29 @@ pub struct RedactionConfig {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerboseConfig {
+    /// Default verbose level when CLI flags / env are absent. 0 = silent.
+    #[serde(default)]
+    pub default_level: u8,
+    /// Whether the reedline status line is rendered.
+    #[serde(default = "default_status_line")]
+    pub status_line: bool,
+}
+
+fn default_status_line() -> bool {
+    true
+}
+
+impl Default for VerboseConfig {
+    fn default() -> Self {
+        Self {
+            default_level: 0,
+            status_line: true,
+        }
+    }
+}
+
 impl Config {
     pub fn defaults() -> Self {
         let mut providers = HashMap::new();
@@ -141,6 +166,7 @@ impl Config {
                 directory: "~/.llmsh/sessions".into(),
                 redaction: RedactionConfig { enabled: true },
             },
+            verbose: VerboseConfig::default(),
         }
     }
 
