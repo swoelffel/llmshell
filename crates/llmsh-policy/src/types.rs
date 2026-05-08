@@ -3,7 +3,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
-    ReadOnly, LowRisk, Write, Destructive, Network, Privileged, Unknown,
+    ReadOnly,
+    LowRisk,
+    Write,
+    Destructive,
+    Network,
+    Privileged,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -21,7 +27,10 @@ pub enum PolicyFlag {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum PolicyAction {
     Allow,
-    RequireConfirmation { strong: bool, phrase: Option<String> },
+    RequireConfirmation {
+        strong: bool,
+        phrase: Option<String>,
+    },
     Deny,
 }
 
@@ -39,13 +48,22 @@ mod tests {
 
     #[test]
     fn risk_level_serializes_snake_case() {
-        assert_eq!(serde_json::to_string(&RiskLevel::ReadOnly).unwrap(), "\"read_only\"");
-        assert_eq!(serde_json::to_string(&RiskLevel::Destructive).unwrap(), "\"destructive\"");
+        assert_eq!(
+            serde_json::to_string(&RiskLevel::ReadOnly).unwrap(),
+            "\"read_only\""
+        );
+        assert_eq!(
+            serde_json::to_string(&RiskLevel::Destructive).unwrap(),
+            "\"destructive\""
+        );
     }
 
     #[test]
     fn policy_action_tagged() {
-        let a = PolicyAction::RequireConfirmation { strong: true, phrase: Some("delete 3 files".into()) };
+        let a = PolicyAction::RequireConfirmation {
+            strong: true,
+            phrase: Some("delete 3 files".into()),
+        };
         let s = serde_json::to_string(&a).unwrap();
         assert!(s.contains("\"kind\":\"require_confirmation\""));
         assert!(s.contains("\"strong\":true"));
