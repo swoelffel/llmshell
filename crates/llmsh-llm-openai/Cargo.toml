@@ -1,0 +1,6 @@
+[package]
+name = "llmsh-llm-openai"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

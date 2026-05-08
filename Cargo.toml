@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/llmsh-llm",
+    "crates/llmsh-llm-openai",
+    "crates/llmsh-policy",
+    "crates/llmsh-audit",
+    "crates/llmsh-tools",
+    "crates/llmsh-core",
+    "crates/llmsh-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reedline = "0.36"
+clap = { version = "4", features = ["derive", "env"] }
+walkdir = "2"
+directories = "5"
+sha2 = "0.10"
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3"

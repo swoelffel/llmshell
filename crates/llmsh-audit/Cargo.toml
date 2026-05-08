@@ -1,0 +1,6 @@
+[package]
+name = "llmsh-audit"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

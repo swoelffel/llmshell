@@ -1,0 +1,10 @@
+[package]
+name = "llmsh-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "llmsh"
+path = "src/main.rs"
+
+[dependencies]

@@ -1,0 +1,6 @@
+[package]
+name = "llmsh-policy"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
