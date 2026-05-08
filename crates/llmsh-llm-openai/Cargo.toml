@@ -12,3 +12,7 @@ reqwest = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 llmsh-llm = { path = "../llmsh-llm" }
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { workspace = true }

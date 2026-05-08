@@ -1,6 +1,20 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Deserialize)]
+pub(crate) struct ModelsResponse {
+    pub data: Vec<ModelEntry>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ModelEntry {
+    pub id: String,
+    #[serde(default)]
+    pub owned_by: Option<String>,
+    #[serde(default)]
+    pub created: Option<i64>,
+}
+
 #[derive(Serialize)]
 pub struct ChatRequest<'a> {
     pub model: &'a str,

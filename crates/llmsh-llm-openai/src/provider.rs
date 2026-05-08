@@ -1,14 +1,16 @@
 use crate::mapping::*;
 use crate::wire::*;
+use anyhow::anyhow;
 use async_trait::async_trait;
 use llmsh_llm::capabilities::{Capabilities, ToolCallingMode};
 use llmsh_llm::provider::LlmProvider;
-use llmsh_llm::types::{LlmRequest, LlmResponse};
+use llmsh_llm::types::{LlmRequest, LlmResponse, ModelInfo};
+use std::sync::{Arc, RwLock};
 
 pub struct OpenAIProvider {
     base_url: String,
     api_key: String,
-    model: String,
+    model: Arc<RwLock<String>>,
     http: reqwest::Client,
 }
 
@@ -27,9 +29,13 @@ impl OpenAIProvider {
         Ok(Self {
             base_url: cfg.base_url,
             api_key: cfg.api_key,
-            model: cfg.model,
+            model: Arc::new(RwLock::new(cfg.model)),
             http,
         })
+    }
+
+    pub fn shared_model(&self) -> Arc<RwLock<String>> {
+        self.model.clone()
     }
 }
 
@@ -47,11 +53,16 @@ impl LlmProvider for OpenAIProvider {
     }
 
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        let model = self
+            .model
+            .read()
+            .map_err(|_| anyhow!("model lock poisoned"))?
+            .clone();
         let messages = to_wire_messages(req.system.as_deref(), &req.messages);
         let tools = to_wire_tools(&req.tools);
         let tool_choice = tool_choice_for(req.tool_policy);
         let body = ChatRequest {
-            model: &self.model,
+            model: &model,
             messages,
             tools,
             tool_choice,
@@ -71,5 +82,81 @@ impl LlmProvider for OpenAIProvider {
         }
         let parsed: ChatResponse = resp.json().await?;
         parse_response(parsed)
+    }
+
+    async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+        let body: ModelsResponse = resp.json().await?;
+        Ok(body
+            .data
+            .into_iter()
+            .map(|e| ModelInfo {
+                id: e.id,
+                owned_by: e.owned_by,
+                created: e.created,
+            })
+            .collect())
+    }
+
+    async fn set_model(&self, id: &str) -> anyhow::Result<()> {
+        let mut guard = self
+            .model
+            .write()
+            .map_err(|_| anyhow!("model lock poisoned"))?;
+        *guard = id.to_string();
+        Ok(())
+    }
+
+    fn current_model(&self) -> String {
+        self.model
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "unknown".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_provider(model: &str) -> OpenAIProvider {
+        OpenAIProvider::new(OpenAIConfig {
+            base_url: "https://api.openai.com/v1".into(),
+            api_key: "test-key".into(),
+            model: model.into(),
+            timeout_ms: 5000,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn current_model_returns_initial() {
+        let p = make_provider("gpt-4o-mini");
+        assert_eq!(p.current_model(), "gpt-4o-mini");
+    }
+
+    #[tokio::test]
+    async fn set_model_updates_current() {
+        let p = make_provider("gpt-4o-mini");
+        p.set_model("gpt-4o").await.unwrap();
+        assert_eq!(p.current_model(), "gpt-4o");
+    }
+
+    #[test]
+    fn shared_model_reflects_mutations() {
+        let p = make_provider("gpt-4o-mini");
+        let shared = p.shared_model();
+        {
+            let mut g = shared.write().unwrap();
+            *g = "gpt-4o".into();
+        }
+        assert_eq!(p.current_model(), "gpt-4o");
     }
 }
