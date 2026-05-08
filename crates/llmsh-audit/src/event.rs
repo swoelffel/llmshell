@@ -114,6 +114,11 @@ pub enum AuditEvent {
         user: String,
         tooling_count: usize,
     },
+    ModelChanged {
+        ts: String,
+        from: String,
+        to: String,
+    },
 }
 
 pub fn now_iso() -> String {
