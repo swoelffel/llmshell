@@ -11,11 +11,6 @@ pub struct Memory {
     in_memory: bool,
 }
 
-// Safety: rusqlite::Connection is !Send by default, but we gate all access
-// behind a Mutex, so the combined type is Send + Sync.
-unsafe impl Send for Memory {}
-unsafe impl Sync for Memory {}
-
 pub struct InitAudit {
     pub written_at: String,
     pub host: String,
