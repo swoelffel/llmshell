@@ -53,6 +53,10 @@ impl AgentLoop {
     pub async fn run(&mut self, user_input: &str) -> anyhow::Result<LoopResult> {
         let dep = self.deps.clone();
 
+        if let Ok(mut s) = dep.stats.write() {
+            s.begin_user_turn();
+        }
+
         let user_input_red = dep.redactor.redact(user_input).0;
         if let Err(e) = dep.memory.append_action(&RecentAction {
             ts: now_iso(),

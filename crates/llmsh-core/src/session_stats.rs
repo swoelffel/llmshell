@@ -49,8 +49,22 @@ pub struct SessionTotals {
 }
 
 impl SessionStats {
+    /// Begin a fresh user-input turn: clears any in-progress tool steps and
+    /// schema-repair counters. Call once at the start of `AgentLoop::run`,
+    /// before the LLM-iteration loop.
+    pub fn begin_user_turn(&mut self) {
+        if let Some(t) = self.last_turn.as_mut() {
+            t.tool_steps.clear();
+            t.schema_repair_attempts = 0;
+        }
+    }
+
     /// Build a `TurnStats` from a usage payload + model id + latency.
     /// Pure: no I/O. Updates `last_turn` and `totals`.
+    /// Within a single user turn (across multiple LLM iterations), the
+    /// `tool_steps` and `schema_repair_attempts` accumulators carry over
+    /// from the prior iteration's `last_turn`. Use `begin_user_turn` to
+    /// reset them at the start of a new user input.
     pub fn record_turn(
         &mut self,
         model: &str,
@@ -63,6 +77,12 @@ impl SessionStats {
         let cached = usage.and_then(|u| u.cached_input_tokens).unwrap_or(0);
         let cost = pricing_for(model).map(|p| p.cost_usd(input, cached, output));
 
+        let (carry_steps, carry_attempts) = self
+            .last_turn
+            .as_ref()
+            .map(|t| (t.tool_steps.clone(), t.schema_repair_attempts))
+            .unwrap_or_else(|| (Vec::new(), 0));
+
         self.last_turn = Some(TurnStats {
             model: model.to_string(),
             input_tokens: input,
@@ -71,8 +91,8 @@ impl SessionStats {
             finish_reason,
             latency,
             cost_usd: cost,
-            tool_steps: Vec::new(),
-            schema_repair_attempts: 0,
+            tool_steps: carry_steps,
+            schema_repair_attempts: carry_attempts,
         });
 
         self.totals.turns += 1;
@@ -171,5 +191,69 @@ mod tests {
         );
         let r = s.last_context_ratio().unwrap();
         assert!((r - 0.10).abs() < 1e-9, "got {}", r);
+    }
+
+    #[test]
+    fn tool_steps_carry_across_iterations_until_begin_user_turn() {
+        let mut s = SessionStats::default();
+        // Iteration 1: provider responds with tool_calls, then we push 2 steps.
+        s.record_turn(
+            "gpt-4o-mini",
+            Some(&usage(100, 50, 0)),
+            FinishReason::ToolCalls,
+            Duration::from_millis(100),
+        );
+        if let Some(t) = s.last_turn.as_mut() {
+            t.tool_steps.push(ToolStepStats {
+                tool: "list_directory".into(),
+                status: "success".into(),
+                duration: Duration::from_millis(5),
+                output_bytes: 10,
+                risk: "ReadOnly".into(),
+                flags: vec![],
+            });
+        }
+        // Iteration 2: another tool_calls round, push 1 step.
+        s.record_turn(
+            "gpt-4o-mini",
+            Some(&usage(200, 80, 0)),
+            FinishReason::ToolCalls,
+            Duration::from_millis(120),
+        );
+        if let Some(t) = s.last_turn.as_mut() {
+            t.tool_steps.push(ToolStepStats {
+                tool: "read_file".into(),
+                status: "success".into(),
+                duration: Duration::from_millis(8),
+                output_bytes: 1024,
+                risk: "ReadOnly".into(),
+                flags: vec![],
+            });
+        }
+        // Iteration 3: Stop. record_turn must preserve the previous 2 steps.
+        s.record_turn(
+            "gpt-4o-mini",
+            Some(&usage(300, 100, 0)),
+            FinishReason::Stop,
+            Duration::from_millis(80),
+        );
+        let t = s.last_turn.as_ref().unwrap();
+        assert_eq!(
+            t.tool_steps.len(),
+            2,
+            "expected accumulated steps, got: {:?}",
+            t.tool_steps
+        );
+        assert_eq!(t.tool_steps[0].tool, "list_directory");
+        assert_eq!(t.tool_steps[1].tool, "read_file");
+
+        // Now begin a fresh user turn — steps must reset.
+        s.begin_user_turn();
+        let t2 = s.last_turn.as_ref().unwrap();
+        assert!(
+            t2.tool_steps.is_empty(),
+            "begin_user_turn must clear tool_steps"
+        );
+        assert_eq!(t2.schema_repair_attempts, 0);
     }
 }
