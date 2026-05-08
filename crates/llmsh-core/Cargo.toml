@@ -5,3 +5,24 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+regex = { workspace = true }
+directories = { workspace = true }
+reedline = { workspace = true }
+llmsh-llm = { path = "../llmsh-llm" }
+llmsh-tools = { path = "../llmsh-tools" }
+llmsh-policy = { path = "../llmsh-policy" }
+llmsh-audit = { path = "../llmsh-audit" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
