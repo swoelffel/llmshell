@@ -102,11 +102,15 @@ impl RuntimeContext {
 }
 
 fn find_disk_for_cwd(cwd: &std::path::Path) -> (Option<u64>, Option<u64>) {
+    find_disk_for_path(cwd)
+}
+
+pub(crate) fn find_disk_for_path(path: &std::path::Path) -> (Option<u64>, Option<u64>) {
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let best = disks
         .list()
         .iter()
-        .filter(|d| cwd.starts_with(d.mount_point()))
+        .filter(|d| path.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().as_os_str().len());
     match best {
         Some(d) => (Some(d.available_space()), Some(d.total_space())),

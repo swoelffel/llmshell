@@ -4,6 +4,7 @@ pub mod config;
 pub mod confirm;
 pub mod context;
 pub mod executor;
+pub mod init;
 pub mod input;
 pub mod llm_redact;
 pub mod memory;
