@@ -1,8 +1,11 @@
 use crate::executor::StepResult;
 use crate::llm_redact::LlmRedactor;
 use crate::memory::{ActionKind, Memory};
+use crate::sysctx::{RuntimeContext, RuntimeContextInput};
 use llmsh_llm::types::{Message, MessageRole};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub const DEFAULT_PERSONA: &str = "\
 You are LLMShell, an agentic shell assistant installed on this machine. \
@@ -93,11 +96,26 @@ impl SystemPromptSource for StaticSystemPrompt {
 pub struct MemorySystemPrompt {
     agents_md: Option<String>,
     memory: Arc<Memory>,
+    workspace_root: PathBuf,
+    model: Arc<String>,
+    session_start: Instant,
 }
 
 impl MemorySystemPrompt {
-    pub fn new(agents_md: Option<String>, memory: Arc<Memory>) -> Self {
-        Self { agents_md, memory }
+    pub fn new(
+        agents_md: Option<String>,
+        memory: Arc<Memory>,
+        workspace_root: PathBuf,
+        model: Arc<String>,
+        session_start: Instant,
+    ) -> Self {
+        Self {
+            agents_md,
+            memory,
+            workspace_root,
+            model,
+            session_start,
+        }
     }
 
     fn format_recent_activity(&self) -> Option<String> {
@@ -130,6 +148,12 @@ impl SystemPromptSource for MemorySystemPrompt {
             .ok()
             .flatten()
             .map(|a| a.summary_md);
+        let rt = RuntimeContext::capture(RuntimeContextInput {
+            workspace_root: self.workspace_root.clone(),
+            model: self.model.as_ref().clone(),
+            session_start: self.session_start,
+        });
+        b.runtime_context = Some(rt.render());
         b.recent_activity = self.format_recent_activity();
         b.build()
     }
@@ -312,6 +336,16 @@ mod tests {
         assert_eq!(build(), build());
     }
 
+    fn make_test_prompt(memory: Arc<Memory>) -> MemorySystemPrompt {
+        MemorySystemPrompt::new(
+            None,
+            memory,
+            std::path::PathBuf::from("/tmp"),
+            Arc::new("mock:test".to_string()),
+            std::time::Instant::now(),
+        )
+    }
+
     #[test]
     fn memory_system_prompt_tool_line_format() {
         use crate::memory::{ActionKind, Memory, RecentAction};
@@ -326,7 +360,7 @@ mod tests {
             })
             .unwrap();
 
-        let prompt = MemorySystemPrompt::new(None, memory);
+        let prompt = make_test_prompt(memory);
         let activity = prompt.format_recent_activity().unwrap();
         assert_eq!(activity, "tool[list_directory]: success");
     }
@@ -351,7 +385,7 @@ mod tests {
                 .unwrap();
         }
 
-        let prompt = MemorySystemPrompt::new(None, memory);
+        let prompt = make_test_prompt(memory);
         let activity = prompt.format_recent_activity().unwrap();
         let lines: Vec<&str> = activity.lines().collect();
         assert_eq!(lines.len(), 3);

@@ -39,6 +39,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let session_start = std::time::Instant::now();
     if std::env::var("LLMSH_DEBUG").ok().as_deref() == Some("1") {
         tracing_subscriber::fmt()
             .with_writer(std::io::stderr)
@@ -148,7 +149,14 @@ async fn main() -> anyhow::Result<()> {
 
     // 7. Agent deps
     let agents_md = load_agents_md();
-    let system_prompt = Arc::new(MemorySystemPrompt::new(agents_md, memory.clone()));
+    let model = Arc::new(cfg.default_model.clone());
+    let system_prompt = Arc::new(MemorySystemPrompt::new(
+        agents_md,
+        memory.clone(),
+        workspace_root.clone(),
+        model,
+        session_start,
+    ));
     let deps = Arc::new(AgentDeps {
         provider,
         pipeline,

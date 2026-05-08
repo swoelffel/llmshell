@@ -13,7 +13,7 @@ use llmsh_policy::context::PolicyContext;
 use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine};
 use llmsh_tools::registry::ToolRegistry;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 pub struct MockLlmProvider {
@@ -127,6 +127,9 @@ pub fn build_test_deps_with_memory(
     let system_prompt = Arc::new(llmsh_core::context::MemorySystemPrompt::new(
         agents_md,
         memory.clone(),
+        std::env::temp_dir(),
+        Arc::new("mock:test-model".to_string()),
+        Instant::now(),
     ));
     let deps = Arc::new(AgentDeps {
         provider: provider.clone(),
