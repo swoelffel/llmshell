@@ -3,7 +3,8 @@ use serde_json::Value;
 
 // v1: initial schema
 // v2: added MachineAuditPerformed variant
-pub const SCHEMA_VERSION: u32 = 2;
+// v3: added ContextCompacted variant
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -118,6 +119,16 @@ pub enum AuditEvent {
         ts: String,
         from: String,
         to: String,
+    },
+    ContextCompacted {
+        ts: String,
+        reason: String,
+        strategy: String,
+        messages_before: usize,
+        messages_after: usize,
+        bytes_before: usize,
+        bytes_after: usize,
+        summary_digest: Option<String>,
     },
 }
 

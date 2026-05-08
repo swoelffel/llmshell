@@ -12,6 +12,8 @@ pub struct Config {
     pub audit: AuditConfig,
     #[serde(default)]
     pub verbose: VerboseConfig,
+    #[serde(default)]
+    pub compact: CompactConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +106,52 @@ impl Default for VerboseConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactConfig {
+    /// Auto-compaction threshold as a percentage of the model's context window.
+    /// 0 disables auto. Range 0-100; values > 100 are clamped to 100.
+    #[serde(default = "default_auto_threshold")]
+    pub auto_threshold_pct: u32,
+    /// Number of trailing user turns to keep verbatim during summarization.
+    #[serde(default = "default_keep_user_turns")]
+    pub keep_last_user_turns: usize,
+    /// Per-tool-result byte budget for the deterministic truncate stage.
+    #[serde(default = "default_tool_output_max_bytes")]
+    pub tool_output_max_bytes: usize,
+    /// Cap on the summary length for the summarize stage.
+    #[serde(default = "default_summary_max_tokens")]
+    pub summary_max_tokens: u32,
+    /// Provider:model id used for the summarization call. Empty → reuse the
+    /// session model.
+    #[serde(default)]
+    pub model: String,
+}
+
+fn default_auto_threshold() -> u32 {
+    80
+}
+fn default_keep_user_turns() -> usize {
+    4
+}
+fn default_tool_output_max_bytes() -> usize {
+    2048
+}
+fn default_summary_max_tokens() -> u32 {
+    500
+}
+
+impl Default for CompactConfig {
+    fn default() -> Self {
+        Self {
+            auto_threshold_pct: default_auto_threshold(),
+            keep_last_user_turns: default_keep_user_turns(),
+            tool_output_max_bytes: default_tool_output_max_bytes(),
+            summary_max_tokens: default_summary_max_tokens(),
+            model: String::new(),
+        }
+    }
+}
+
 impl Config {
     pub fn defaults() -> Self {
         let mut providers = HashMap::new();
@@ -167,6 +215,7 @@ impl Config {
                 redaction: RedactionConfig { enabled: true },
             },
             verbose: VerboseConfig::default(),
+            compact: CompactConfig::default(),
         }
     }
 
