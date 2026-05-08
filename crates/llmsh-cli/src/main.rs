@@ -186,6 +186,10 @@ async fn main() -> anyhow::Result<()> {
         model_label: shared_model.clone(),
         system_prompt,
         memory,
+        verbose: 0,
+        stats: Arc::new(std::sync::RwLock::new(
+            llmsh_core::session_stats::SessionStats::default(),
+        )),
     });
 
     let repl = Repl {

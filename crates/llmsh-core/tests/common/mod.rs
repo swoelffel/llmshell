@@ -6,6 +6,7 @@ use llmsh_core::confirm::AlwaysYesGate;
 use llmsh_core::executor::ToolExecutor;
 use llmsh_core::memory::Memory;
 use llmsh_core::pipeline::Pipeline;
+use llmsh_core::session_stats::SessionStats;
 use llmsh_llm::capabilities::{Capabilities, ToolCallingMode};
 use llmsh_llm::provider::LlmProvider;
 use llmsh_llm::types::{LlmRequest, LlmResponse};
@@ -154,6 +155,8 @@ pub fn build_test_deps_with_memory(
         model_label: Arc::new(RwLock::new("mock:test".into())),
         system_prompt,
         memory,
+        verbose: 0,
+        stats: Arc::new(std::sync::RwLock::new(SessionStats::default())),
     });
     (deps, provider)
 }

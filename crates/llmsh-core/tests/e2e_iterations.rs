@@ -88,6 +88,10 @@ async fn max_iterations_stops_loop() {
         model_label: Arc::new(RwLock::new("mock:test".into())),
         system_prompt: Arc::new(StaticSystemPrompt::new(None)),
         memory: Arc::new(Memory::open_in_memory().unwrap()),
+        verbose: 0,
+        stats: Arc::new(std::sync::RwLock::new(
+            llmsh_core::session_stats::SessionStats::default(),
+        )),
     });
 
     let mut agent = AgentLoop {

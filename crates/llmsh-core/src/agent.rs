@@ -3,6 +3,7 @@ use crate::executor::ToolExecutor;
 use crate::memory::{ActionKind, Memory, RecentAction};
 use crate::pipeline::Pipeline;
 use crate::plan::ModelPlan;
+use crate::session_stats::SessionStats;
 use llmsh_audit::digest::canonical_json_digest;
 use llmsh_audit::event::{now_iso, AuditEvent};
 use llmsh_audit::redact::Redactor;
@@ -11,6 +12,7 @@ use llmsh_llm::provider::LlmProvider;
 use llmsh_llm::types::{FinishReason, LlmRequest, ToolPolicyHint};
 use llmsh_policy::context::PolicyContext;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub struct AgentBounds {
     pub max_iterations: u32,
@@ -31,6 +33,10 @@ pub struct AgentDeps {
     pub model_label: std::sync::Arc<std::sync::RwLock<String>>,
     pub system_prompt: Arc<dyn SystemPromptSource>,
     pub memory: Arc<Memory>,
+    /// 0 = silent, 1 = tier-1, 2 = tier-1 + tier-2.
+    pub verbose: u8,
+    /// Live session stats; shared with the status-line prompt.
+    pub stats: Arc<std::sync::RwLock<SessionStats>>,
 }
 
 pub struct AgentLoop {
@@ -99,7 +105,19 @@ impl AgentLoop {
                 redaction_hit_count: 0,
             });
 
+            let started = Instant::now();
             let resp = dep.provider.complete(req).await?;
+            let latency = started.elapsed();
+            {
+                let model_now = dep
+                    .model_label
+                    .read()
+                    .map(|g| g.clone())
+                    .unwrap_or_else(|_| "unknown".into());
+                if let Ok(mut s) = dep.stats.write() {
+                    s.record_turn(&model_now, resp.usage.as_ref(), resp.finish_reason, latency);
+                }
+            }
             let tool_calls_digest = if resp.tool_calls.is_empty() {
                 None
             } else {

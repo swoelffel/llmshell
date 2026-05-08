@@ -213,6 +213,10 @@ async fn rendered_system_prompt_reflects_model_switch() {
         model_label: model_label.clone(),
         system_prompt,
         memory,
+        verbose: 0,
+        stats: Arc::new(std::sync::RwLock::new(
+            llmsh_core::session_stats::SessionStats::default(),
+        )),
     });
 
     // Turn 1: capture initial system prompt.

@@ -113,6 +113,10 @@ async fn redaction_no_literal_secrets_in_audit() {
             model_label: Arc::new(RwLock::new("mock:test".into())),
             system_prompt: Arc::new(StaticSystemPrompt::new(None)),
             memory: Arc::new(Memory::open_in_memory().unwrap()),
+            verbose: 0,
+            stats: Arc::new(std::sync::RwLock::new(
+                llmsh_core::session_stats::SessionStats::default(),
+            )),
         })
     };
 

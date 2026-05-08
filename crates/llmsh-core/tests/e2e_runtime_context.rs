@@ -87,6 +87,10 @@ async fn system_prompt_contains_runtime_context_block() {
             model_label: Arc::new(RwLock::new("mock:test-model".into())),
             system_prompt,
             memory,
+            verbose: 0,
+            stats: Arc::new(std::sync::RwLock::new(
+                llmsh_core::session_stats::SessionStats::default(),
+            )),
         });
         (deps, provider)
     };

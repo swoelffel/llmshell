@@ -105,6 +105,10 @@ async fn external_cancel_recorded_in_audit() {
         model_label: Arc::new(RwLock::new("mock:test".into())),
         system_prompt: Arc::new(StaticSystemPrompt::new(None)),
         memory: Arc::new(Memory::open_in_memory().unwrap()),
+        verbose: 0,
+        stats: Arc::new(std::sync::RwLock::new(
+            llmsh_core::session_stats::SessionStats::default(),
+        )),
     });
 
     // Fire the cancel token after 100 ms while the agent loop is running.
