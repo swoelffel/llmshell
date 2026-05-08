@@ -11,11 +11,9 @@ pub fn load_agents_md() -> Option<String> {
 
 /// Variant for tests that takes an explicit path (so tests don't depend on $HOME).
 pub fn load_agents_md_from(path: &Path) -> Option<String> {
-    if !path.exists() {
-        return None;
-    }
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => {
             tracing::warn!("AGENTS.md unreadable at {}: {}", path.display(), e);
             return None;
