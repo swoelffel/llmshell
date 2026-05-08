@@ -15,11 +15,19 @@ impl AuditWriter {
         let path = dir.join(format!("{}.jsonl", session_id));
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
         set_file_perms(&path, 0o600)?;
-        Ok(Self { path, file: Some(file), enabled: true })
+        Ok(Self {
+            path,
+            file: Some(file),
+            enabled: true,
+        })
     }
 
     pub fn disabled() -> Self {
-        Self { path: PathBuf::new(), file: None, enabled: false }
+        Self {
+            path: PathBuf::new(),
+            file: None,
+            enabled: false,
+        }
     }
 
     pub fn write(&mut self, ev: &AuditEvent) -> anyhow::Result<()> {
@@ -79,7 +87,11 @@ mod tests {
     fn writes_jsonl() {
         let tmp = tempfile::tempdir().unwrap();
         let mut w = AuditWriter::open(tmp.path(), "sess-1").unwrap();
-        w.write(&AuditEvent::SessionEnded { ts: now_iso(), reason: "test".into() }).unwrap();
+        w.write(&AuditEvent::SessionEnded {
+            ts: now_iso(),
+            reason: "test".into(),
+        })
+        .unwrap();
         w.flush().unwrap();
         let s = std::fs::read_to_string(tmp.path().join("sess-1.jsonl")).unwrap();
         assert!(s.contains("session_ended"));

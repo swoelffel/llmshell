@@ -1,6 +1,10 @@
+pub mod digest;
 pub mod event;
 pub mod redact;
+pub mod session;
 pub mod writer;
+pub use digest::*;
 pub use event::*;
 pub use redact::*;
+pub use session::*;
 pub use writer::*;
