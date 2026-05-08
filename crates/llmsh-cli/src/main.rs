@@ -11,6 +11,7 @@ use llmsh_core::config::Config;
 use llmsh_core::confirm::StdinConfirmationGate;
 use llmsh_core::context::MemorySystemPrompt;
 use llmsh_core::executor::ToolExecutor;
+use llmsh_core::init::run_autoinit_if_needed;
 use llmsh_core::memory::Memory;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
@@ -146,6 +147,15 @@ async fn main() -> anyhow::Result<()> {
     // 6. Memory
     let memory_path = memory_path_from_env_or_default(std::env::var("LLMSH_MEMORY_DB").ok())?;
     let memory = Arc::new(Memory::open(&memory_path)?);
+
+    // Auto-bootstrap: run /init on first launch when DB has no audit entry.
+    let no_autoinit = std::env::var("LLMSH_NO_AUTOINIT")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_some();
+    if run_autoinit_if_needed(&memory, no_autoinit).await? {
+        println!("(initial machine audit — type /init to refresh)");
+    }
 
     // 7. Agent deps
     let agents_md = load_agents_md();

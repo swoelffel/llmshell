@@ -913,6 +913,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "directories",
+ "libc",
  "llmsh-audit",
  "llmsh-llm",
  "llmsh-policy",
