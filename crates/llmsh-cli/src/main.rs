@@ -73,6 +73,11 @@ async fn main() -> anyhow::Result<()> {
         cfg.default_model = m;
     }
 
+    let workspace_root = std::env::current_dir()?;
+    if let Some(project) = load_project(&workspace_root)? {
+        let _ = merge_project(&mut cfg, &project);
+    }
+
     let verbose_level: u8 = if cli.verbose > 0 {
         cli.verbose.min(2)
     } else if let Ok(s) = std::env::var("LLMSH_VERBOSE") {
@@ -80,11 +85,6 @@ async fn main() -> anyhow::Result<()> {
     } else {
         cfg.verbose.default_level.min(2)
     };
-
-    let workspace_root = std::env::current_dir()?;
-    if let Some(project) = load_project(&workspace_root)? {
-        let _ = merge_project(&mut cfg, &project);
-    }
 
     // 2. Audit
     let no_audit = std::env::var("LLMSH_NO_AUDIT").ok().as_deref() == Some("1");
