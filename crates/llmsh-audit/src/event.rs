@@ -107,7 +107,6 @@ pub enum AuditEvent {
         ts: String,
         reason: String,
     },
-    #[serde(rename = "machine_audit_performed")]
     MachineAuditPerformed {
         ts: String,
         host: String,
@@ -119,4 +118,23 @@ pub enum AuditEvent {
 
 pub fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn machine_audit_performed_serializes_as_snake_case() {
+        let ev = AuditEvent::MachineAuditPerformed {
+            ts: "2026-05-08T10:42:00Z".into(),
+            host: "h".into(),
+            os: "macOS 25.3.0 (Darwin arm64)".into(),
+            user: "u".into(),
+            tooling_count: 7,
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "machine_audit_performed");
+        assert_eq!(json["tooling_count"], 7);
+    }
 }
