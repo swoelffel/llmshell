@@ -14,7 +14,14 @@ members = [
 version = "0.2.1"
 edition = "2021"
 rust-version = "1.78"
-license = "MIT OR Apache-2.0"
+license = "MIT"
+description = "Safety-first agentic shell: natural-language tasks, typed tools, policy gates, tamper-evident audit logs."
+repository = "https://github.com/swoelffel/llmshell"
+homepage = "https://github.com/swoelffel/llmshell"
+readme = "README.md"
+keywords = ["agent", "shell", "llm", "terminal", "audit"]
+categories = ["command-line-utilities", "development-tools"]
+authors = ["Stéphane Woelffel <swoelffel@castelis.com>"]
 
 [workspace.dependencies]
 anyhow = "1"

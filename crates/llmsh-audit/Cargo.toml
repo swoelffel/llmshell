@@ -3,6 +3,14 @@ name = "llmsh-audit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+description = "LLMShell append-only JSONL audit log with hash-chained digests and redaction."
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }

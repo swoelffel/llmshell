@@ -1,0 +1,101 @@
+# Audit log
+
+LLMShell records every step of every session in an append-only, hash-chained, redacted audit log. This page describes its layout, the event taxonomy, the redaction model, and the invariants that make the log meaningful.
+
+## Where it lives
+
+By default, audit files are written under:
+
+```
+~/.local/share/llmsh/audit/
+```
+
+One file per session, named after the session id, with the `.jsonl` extension. The directory is created with `0o700` permissions and audit files with `0o600`. Do not loosen those.
+
+Override with the `audit.dir` field in `~/.config/llmsh/config.toml`. Disable entirely with `LLMSH_NO_AUDIT=1` (not recommended outside tests).
+
+## Wire format
+
+Each line is a single JSON object:
+
+```json
+{ "type": "tool_execution_start", "ts": "2026-05-08T10:21:33Z", "plan_id": "…", "step_id": "…", "tool": "read_file", "args_digest": "sha256:…", "digest": "sha256:…" }
+```
+
+- `type` — the variant tag (`#[serde(tag = "type", rename_all = "snake_case")]`).
+- `ts` — RFC 3339 UTC timestamp.
+- variant-specific fields.
+- `digest` — hash of this line plus the previous line's digest, forming the chain.
+
+Schema version is exposed as `SCHEMA_VERSION` in [`crates/llmsh-audit/src/event.rs`](../crates/llmsh-audit/src/event.rs). Current value: `2`.
+
+## Event taxonomy
+
+| Variant | Emitted when |
+|---|---|
+| `SessionStarted` | A new REPL session begins. Carries `cwd`, `model`, `policy_mode`, `llmsh_version`, `schema_version`, `config_effective_hash`. |
+| `UserInput` | The user submits a line. Text is redacted. |
+| `LlmRequest` | A request is sent to the provider. Includes a digest of the messages and a redaction hit count. |
+| `LlmResponse` | A response comes back. Carries finish reason, redacted message, tool-call digest, optional usage. |
+| `ModelPlan` | The model proposes one or more tool calls in a turn. |
+| `PolicyDecision` | `PolicyEngine` classifies a plan step. Records `effective_risk`, `action`, `flags`, `reasons`. |
+| `ConfirmationAsked` | A `Confirm`-level action surfaces a prompt. Records whether it was granted. |
+| `ToolExecutionStart` | A tool starts. Includes `args_digest` and a redacted preview. |
+| `ToolExecutionEnd` | A tool finishes. Records `status`, `exit_code`, redacted stdout/stderr. |
+| `RawShellExecution` | A `!`-prefixed raw shell line ran. |
+| `AssistantMessage` | The assistant emits user-facing text. |
+| `Error` | A failure occurred along any path. |
+| `SessionEnded` | The REPL exits. |
+| `MachineAuditPerformed` | An automated audit of the host machine ran (e.g. on `/init`). |
+| `ModelChanged` | The active model changed via `/model`. |
+
+## Hash chain
+
+`AuditWriter` chains a hash from one line to the next: each event's `digest` is `sha256(prev_digest || line_bytes)`. Tampering with any line invalidates every subsequent line.
+
+A direct `writeln!` to the JSONL bypasses the chain and is a regression. All audit writes must go through `AuditWriter`.
+
+## Required invariants
+
+These are non-negotiable (see [.claude/rules/audit-invariants.md](../.claude/rules/audit-invariants.md)):
+
+1. **Every execution path emits an event on success, error, and cancellation.** A `?` propagation that skips an audit write is a regression.
+2. **All audit writes go through `AuditWriter`.**
+3. **Every text field carrying user, tool, or model output passes through `Redactor::default_audit()` before the write.**
+4. **Tool outputs returned to the LLM pass through `llm_redact`** so secrets do not re-enter the conversation.
+5. **Filesystem perms stay restrictive** — directory `0o700`, files `0o600`.
+
+## Redaction
+
+Two redactors operate at different boundaries:
+
+- `Redactor::default_audit()` — strips secrets before they reach the audit file. Patterns include API keys (OpenAI, AWS, etc.), JWTs, common credential formats, file paths matching SSH key locations.
+- `llm_redact` — strips secrets from tool output before it is sent back to the model in the next iteration. Prevents secret re-injection.
+
+Both are best-effort string-level redactors. They are not a substitute for keeping secrets out of allowed roots.
+
+## Adding a new event variant
+
+1. Add fields needed to reconstruct what happened (timestamp, ids, redacted text fields).
+2. Emit the event on the success **and** error **and** cancel paths of the new feature.
+3. Mirror existing `#[serde(tag = "type", rename_all = "snake_case")]` conventions so JSONL substring asserts in tests keep working.
+4. Bump `SCHEMA_VERSION` if existing fields change shape.
+5. Write an e2e test under `crates/llmsh-core/tests/` asserting the event is emitted on the relevant paths.
+
+## Reading the log
+
+Each session file is plain JSONL. To inspect:
+
+```bash
+# Most recent session, pretty-printed
+ls -t ~/.local/share/llmsh/audit/ | head -1 | xargs -I{} cat ~/.local/share/llmsh/audit/{} | jq .
+
+# All policy decisions across all sessions
+jq -c 'select(.type == "policy_decision")' ~/.local/share/llmsh/audit/*.jsonl
+```
+
+To verify the chain (planned tooling on the [roadmap](../ROADMAP.md)):
+
+```bash
+# llmsh audit verify ~/.local/share/llmsh/audit/<session>.jsonl
+```

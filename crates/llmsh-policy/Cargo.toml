@@ -3,6 +3,14 @@ name = "llmsh-policy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+description = "LLMShell risk policy engine — Allow/Confirm/Deny classification with sensitive-path checks."
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }

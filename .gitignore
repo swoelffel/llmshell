@@ -1,0 +1,8 @@
+# Rust build output
+/target/
+
+# Per-developer briefs / scratch notes (not part of the public docs)
+/ai-docs/
+
+# Personal Claude Code settings (hooks, tool permissions)
+.claude/settings.local.json

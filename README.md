@@ -1,52 +1,152 @@
 # LLMShell
 
-LLMShell (`llmsh`) is an agentic shell that replaces your terminal prompt with an LLM-powered agent. Type a natural-language task; the agent plans, calls tools (read files, list directories, run processes), enforces a configurable risk policy before every action, and writes a tamper-evident audit log — all within your current working directory.
+**Safety-first agentic shell for developers and operators.**
 
-## Project layout
+![CI](https://github.com/swoelffel/llmshell/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Rust](https://img.shields.io/badge/rust-1.78%2B-orange)
+![Status](https://img.shields.io/badge/status-experimental-yellow)
 
-```
-crates/
-  llmsh-llm          # Provider trait + shared message types
-  llmsh-llm-openai   # OpenAI-compatible HTTP provider
-  llmsh-policy       # Risk-classification and enforcement engine
-  llmsh-tools        # Built-in tool implementations
-  llmsh-audit        # Structured audit-log writer
-  llmsh-core         # Agent loop, REPL, config, pipeline orchestration
-  llmsh-cli          # Binary entry-point (`llmsh`)
-```
+LLMShell (`llmsh`) lets you describe terminal tasks in natural language. The agent plans, calls typed tools, checks a configurable policy before risky actions, and records a redacted audit trail.
 
-## Requirements
+> The AI shell that asks before it acts — and records what it did.
 
-- Rust 1.78 or later (see `rust-toolchain.toml`)
-- An OpenAI-compatible API key (set `OPENAI_API_KEY`)
-
-## Build
+## Quick start
 
 ```bash
-cargo build --release
-```
-
-The binary lands at `target/release/llmsh`.
-
-## Run
-
-```bash
+cargo install --git https://github.com/swoelffel/llmshell --locked
 export OPENAI_API_KEY=sk-...
+llmsh
+```
+
+On first launch, `llmsh` writes a default config to `~/.config/llmsh/config.toml`. A project-level `.llmsh.toml` in the current directory merges on top.
+
+## Example session
+
+```text
+llmsh> list the files in this directory
+[tool] list_directory
+[assistant] Cargo.toml, README.md, crates/, …
+
+llmsh> read README.md and summarise it
+[tool] read_file
+[assistant] LLMShell is a safety-first agentic shell …
+
+llmsh> read ~/.ssh/id_rsa
+[policy] denied: sensitive path
+
+llmsh> !ls -la
+[raw shell] executed and audited
+```
+
+Most AI terminal tools focus on generating commands. LLMShell focuses on **controlled execution**.
+
+## Why LLMShell?
+
+- **Typed tools, not raw shell by default** — the agent calls `read_file`, `list_directory`, `run_process` with structured arguments, not free-form commands.
+- **Policy gate before every action** — each tool call is classified into `Allow` / `Confirm` / `Deny` before it runs.
+- **Sensitive path detection** — paths like `~/.ssh/`, credentials files, system directories are denied unless the user explicitly opts in.
+- **Confirmation prompts on risky operations** — destructive or ambiguous calls surface tool args + policy flags before execution.
+- **Redacted, append-only audit log** — every step is recorded as hash-chained JSONL with secrets stripped at the LLM boundary.
+- **Explicit raw shell escape via `!`** — when you really need raw shell, prefix with `!`. It still goes through the audit log.
+
+## How it compares
+
+| Category | Main focus | LLMShell difference |
+|---|---|---|
+| Command generators | Generate shell commands from prompts | LLMShell executes typed tools through a policy engine |
+| Terminal agents | Let an LLM operate in a terminal | LLMShell emphasises policy, audit and controlled execution |
+| AI terminals | Improve terminal UX with AI | LLMShell focuses on the shell/runtime layer |
+| Natural-language shells | Interpret natural language as actions | LLMShell is safety-first and audit-first |
+
+## Safety model
+
+- The LLM proposes; the runtime decides.
+- The `ToolRegistry` is the only source of executable tools.
+- Sensitive paths are denied by default.
+- Risky actions require explicit confirmation.
+- The audit log is local, redacted, and append-only.
+- LLMShell is **not** a sandbox — it adds gates around tool calls, not OS-level isolation.
+
+Full details: [docs/safety.md](docs/safety.md).
+
+## Architecture
+
+Seven Rust crates:
+
+- `llmsh-llm` — provider-neutral `LlmProvider` trait + neutral message/tool-call types.
+- `llmsh-llm-openai` — OpenAI-compatible HTTP provider.
+- `llmsh-policy` — `RiskAction` (`Allow` / `Confirm` / `Deny`) classifier.
+- `llmsh-tools` — `read_file`, `list_directory`, `run_process` behind a `Tool` trait.
+- `llmsh-audit` — append-only JSONL with hash-chained `digest`, redaction, event taxonomy.
+- `llmsh-core` — agent loop, pipeline (schema + policy + sensitive paths), executor, REPL, confirmation gate.
+- `llmsh-cli` — `clap`/`tokio` entry point, builds the `llmsh` binary.
+
+## Installation
+
+### From source (recommended for now)
+
+```bash
+cargo install --git https://github.com/swoelffel/llmshell --locked
+```
+
+### Build for development
+
+```bash
+git clone https://github.com/swoelffel/llmshell
+cd llmshell
+cargo build --release
 ./target/release/llmsh
 ```
 
-On first run a default config is created at `~/.config/llmsh/config.toml`. You can override it with `--config <path>` or select a model with `--model provider:model-name`.
+### Pre-built binaries
+
+Pre-built Linux/macOS binaries, an `install.sh` script and a Homebrew tap are tracked on the [roadmap](ROADMAP.md) for v0.3.
 
 ## Configuration
 
-`~/.config/llmsh/config.toml` controls the default model, per-risk-level policy actions (allow / confirm / deny), filesystem allowed roots, tool timeouts, and audit log directory. A project-level `.llmsh.toml` in the current directory merges on top of the user config.
+`~/.config/llmsh/config.toml` controls:
 
-## Debug / audit
+- default model (`provider:model-name`),
+- per-risk-level policy actions (allow / confirm / deny),
+- filesystem allowed roots,
+- per-tool timeouts,
+- audit log directory.
 
-Set `LLMSH_DEBUG=1` to emit tracing output on stderr.  
-Set `LLMSH_NO_AUDIT=1` to disable the audit log (not recommended in production).  
-Audit events are written as newline-delimited JSON to `~/.local/share/llmsh/audit/`.
+A project-level `.llmsh.toml` merges on top of the user config.
+
+Useful environment variables:
+
+- `OPENAI_API_KEY` — required.
+- `LLMSH_MODEL` — override default model for a session.
+- `LLMSH_CONFIG` — alternative config path.
+- `LLMSH_DEBUG=1` — tracing on stderr.
+- `LLMSH_NO_AUDIT=1` — disable the audit log (not recommended).
+
+Full reference: [docs/configuration.md](docs/configuration.md).
+
+## Status
+
+LLMShell is **early-stage experimental software**. Do not use it on production systems or sensitive environments without reviewing the policy configuration first.
+
+Current capabilities:
+
+- OpenAI-compatible provider with runtime model switch (`/model`),
+- natural-language REPL with slash commands,
+- typed tools: `list_directory`, `read_file`, `run_process`,
+- policy engine with sensitive-path protection,
+- raw shell escape via `!`,
+- redacted JSONL audit log with hash chain,
+- Linux and macOS development targets.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md). Highlights for v0.3: release binaries, install script, Homebrew tap, demo asciinema.
+
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: please follow [SECURITY.md](SECURITY.md).
 
 ## License
 
-Dual-licensed under **MIT OR Apache-2.0**. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

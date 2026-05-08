@@ -3,6 +3,14 @@ name = "llmsh-tools"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+description = "LLMShell typed tools — read_file, list_directory, run_process behind a Tool trait."
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }
