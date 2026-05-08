@@ -1,6 +1,295 @@
-use llmsh_llm::types::Message;
+use anyhow::Result;
+use llmsh_audit::digest::sha256_hex;
+use llmsh_llm::provider::LlmProvider;
+use llmsh_llm::types::{LlmRequest, Message, MessageRole, ToolPolicyHint};
+use std::sync::Arc;
 
-pub fn find_cut_index(_messages: &[Message], _keep_last_user_turns: usize) -> Option<usize> {
-    // Implemented in task 3.
+/// Returns the index just before the `keep_last_user_turns`-th user message
+/// counted from the end. Messages at indices `< cut_index` are eligible for
+/// summarization. Returns `None` if the conversation has fewer than
+/// `keep_last_user_turns + 1` user messages — nothing to summarize.
+///
+/// Special case: `keep_last_user_turns == 0` means "summarize everything"
+/// → returns `Some(messages.len())`.
+///
+/// Guarantees: the cut is always immediately before a `user` message, so the
+/// summarized prefix is a complete logical history (no half-tool-call
+/// dangling).
+pub fn find_cut_index(messages: &[Message], keep_last_user_turns: usize) -> Option<usize> {
+    if keep_last_user_turns == 0 {
+        return Some(messages.len());
+    }
+    let mut user_count = 0usize;
+    for (i, m) in messages.iter().enumerate().rev() {
+        if m.role == MessageRole::User {
+            user_count += 1;
+            if user_count == keep_last_user_turns {
+                return if i == 0 { None } else { Some(i) };
+            }
+        }
+    }
     None
+}
+
+const SUMMARIZE_PROMPT_HEADER: &str = "\
+Tu résumes une conversation entre un utilisateur et un agent shell pour la conserver dans le contexte. \
+Produis un résumé factuel et concis qui préserve : \
+- les décisions et leur justification \
+- les actions exécutées (commandes, fichiers lus/écrits) et leurs résultats clés \
+- les questions ouvertes ou TODOs explicites. \
+Drop la politesse, les redites, les détails non actionnables.";
+
+/// Produce a single `assistant` content-only message that summarizes the
+/// given prefix. Returns the new message + the sha256 digest of its content.
+/// Fails (Err) if the LLM call fails — caller decides how to handle (typically
+/// fallback silent: keep prefix as-is).
+pub async fn summarize_prefix(
+    provider: Arc<dyn LlmProvider>,
+    summary_model_label: Option<&str>,
+    prefix: &[Message],
+    summary_max_tokens: u32,
+) -> Result<(Message, String)> {
+    let body = render_prefix_for_summary(prefix);
+    let user_msg = format!(
+        "{} Limite : ~{} tokens.\n\n=== conversation ===\n{}",
+        SUMMARIZE_PROMPT_HEADER, summary_max_tokens, body
+    );
+    let req = LlmRequest {
+        system: Some(
+            "Tu es un assistant qui produit des résumés de conversation pour gérer un budget de contexte LLM."
+                .to_string(),
+        ),
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: user_msg,
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }],
+        tools: vec![],
+        tool_policy: ToolPolicyHint::None,
+    };
+    let _ = summary_model_label; // reserved: future hook to swap provider/model
+    let resp = provider.complete(req).await?;
+    let content = resp.message.unwrap_or_default();
+    let prefixed = format!(
+        "=== compacted ({} messages summarized) ===\n{}",
+        prefix.len(),
+        content.trim()
+    );
+    let digest = sha256_hex(prefixed.as_bytes());
+    Ok((
+        Message {
+            role: MessageRole::Assistant,
+            content: prefixed,
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        },
+        digest,
+    ))
+}
+
+fn render_prefix_for_summary(prefix: &[Message]) -> String {
+    let mut out = String::new();
+    for m in prefix {
+        match m.role {
+            MessageRole::User => {
+                out.push_str("user: ");
+                out.push_str(&m.content);
+                out.push('\n');
+            }
+            MessageRole::Assistant => {
+                if let Some(calls) = &m.tool_calls {
+                    let names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
+                    out.push_str("assistant (tool_calls: ");
+                    out.push_str(&names.join(", "));
+                    out.push(')');
+                    if !m.content.is_empty() {
+                        out.push_str(": ");
+                        out.push_str(&m.content);
+                    }
+                    out.push('\n');
+                } else {
+                    out.push_str("assistant: ");
+                    out.push_str(&m.content);
+                    out.push('\n');
+                }
+            }
+            MessageRole::Tool => {
+                let name = m.name.as_deref().unwrap_or("?");
+                out.push_str("tool[");
+                out.push_str(name);
+                out.push_str("]: ");
+                out.push_str(&m.content);
+                out.push('\n');
+            }
+            MessageRole::System => {
+                // Should not appear in prefix (system is rebuilt each turn).
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use llmsh_llm::capabilities::{Capabilities, ToolCallingMode};
+    use llmsh_llm::provider::LlmProvider;
+    use llmsh_llm::types::{FinishReason, LlmRequest, LlmResponse, ModelInfo, TokenUsage};
+    use std::sync::{Arc as StdArc, Mutex};
+
+    fn user(s: &str) -> Message {
+        Message {
+            role: MessageRole::User,
+            content: s.into(),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }
+    }
+    fn assistant(s: &str) -> Message {
+        Message {
+            role: MessageRole::Assistant,
+            content: s.into(),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }
+    }
+
+    #[test]
+    fn cut_at_kth_user_from_end() {
+        let msgs = vec![
+            user("u1"),
+            assistant("a1"),
+            user("u2"),
+            assistant("a2"),
+            user("u3"),
+            assistant("a3"),
+            user("u4"),
+            assistant("a4"),
+            user("u5"),
+            assistant("a5"),
+        ];
+        // K=2 → keep u4,a4,u5,a5 → cut at index of u4 = 6
+        assert_eq!(find_cut_index(&msgs, 2), Some(6));
+    }
+
+    #[test]
+    fn fewer_user_turns_than_k_returns_none() {
+        let msgs = vec![user("u1"), assistant("a1"), user("u2"), assistant("a2")];
+        assert_eq!(find_cut_index(&msgs, 4), None);
+    }
+
+    #[test]
+    fn equal_user_turns_returns_none() {
+        // Exactly K user turns means the first user is at index 0 → cutting at 0
+        // would summarize nothing. Treat as None.
+        let msgs = vec![
+            user("u1"),
+            assistant("a1"),
+            user("u2"),
+            assistant("a2"),
+            user("u3"),
+            assistant("a3"),
+            user("u4"),
+            assistant("a4"),
+        ];
+        assert_eq!(find_cut_index(&msgs, 4), None);
+    }
+
+    #[test]
+    fn keep_zero_means_summarize_everything() {
+        let msgs = vec![user("u1"), assistant("a1")];
+        assert_eq!(find_cut_index(&msgs, 0), Some(2));
+    }
+
+    struct ScriptedProvider {
+        responses: Mutex<Vec<LlmResponse>>,
+    }
+    #[async_trait]
+    impl LlmProvider for ScriptedProvider {
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                tool_calling: ToolCallingMode::Native,
+                supports_streaming: false,
+                supports_json_mode: true,
+                supports_parallel_tool_calls: true,
+                supports_tool_choice_required: true,
+                max_context_tokens: None,
+            }
+        }
+        async fn complete(&self, _: LlmRequest) -> anyhow::Result<LlmResponse> {
+            Ok(self.responses.lock().unwrap().remove(0))
+        }
+        async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
+            Ok(vec![])
+        }
+        async fn set_model(&self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn current_model(&self) -> String {
+            "mock".into()
+        }
+    }
+
+    #[tokio::test]
+    async fn summarize_prefix_yields_assistant_content_only() {
+        let provider: StdArc<dyn LlmProvider> = StdArc::new(ScriptedProvider {
+            responses: Mutex::new(vec![LlmResponse {
+                message: Some("résumé court".into()),
+                tool_calls: vec![],
+                finish_reason: FinishReason::Stop,
+                usage: Some(TokenUsage::default()),
+            }]),
+        });
+        let prefix = vec![user("hello"), assistant("hi")];
+        let (msg, digest) = summarize_prefix(provider, None, &prefix, 500)
+            .await
+            .unwrap();
+        assert_eq!(msg.role, MessageRole::Assistant);
+        assert!(msg.tool_calls.is_none());
+        assert!(msg.tool_call_id.is_none());
+        assert!(msg
+            .content
+            .starts_with("=== compacted (2 messages summarized) ==="));
+        assert!(msg.content.contains("résumé court"));
+        assert_eq!(digest.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn summarize_provider_failure_propagates() {
+        struct Boom;
+        #[async_trait]
+        impl LlmProvider for Boom {
+            fn capabilities(&self) -> Capabilities {
+                Capabilities {
+                    tool_calling: ToolCallingMode::Native,
+                    supports_streaming: false,
+                    supports_json_mode: true,
+                    supports_parallel_tool_calls: true,
+                    supports_tool_choice_required: true,
+                    max_context_tokens: None,
+                }
+            }
+            async fn complete(&self, _: LlmRequest) -> anyhow::Result<LlmResponse> {
+                anyhow::bail!("boom")
+            }
+            async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
+                Ok(vec![])
+            }
+            async fn set_model(&self, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn current_model(&self) -> String {
+                "mock".into()
+            }
+        }
+        let p: StdArc<dyn LlmProvider> = StdArc::new(Boom);
+        let prefix = vec![user("hi"), assistant("ho")];
+        assert!(summarize_prefix(p, None, &prefix, 500).await.is_err());
+    }
 }
