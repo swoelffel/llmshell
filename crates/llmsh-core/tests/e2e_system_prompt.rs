@@ -1,20 +1,13 @@
 mod common;
 
-use common::MockLlmProvider;
-use llmsh_audit::redact::Redactor;
-use llmsh_audit::writer::AuditWriter;
-use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
+use common::build_test_deps_with_agents_md;
+use llmsh_core::agent::AgentLoop;
 use llmsh_core::confirm::AlwaysYesGate;
-use llmsh_core::context::{ContextBuilder, StaticSystemPrompt, DEFAULT_PERSONA};
-use llmsh_core::executor::ToolExecutor;
-use llmsh_core::pipeline::Pipeline;
+use llmsh_core::context::{ContextBuilder, DEFAULT_PERSONA};
 use llmsh_llm::types::{FinishReason, LlmResponse};
 use llmsh_policy::context::PolicyContext;
-use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine};
 use llmsh_tools::registry::ToolRegistry;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use tokio_util::sync::CancellationToken;
+use std::sync::Arc;
 
 fn single_stop_response() -> Vec<LlmResponse> {
     vec![LlmResponse {
@@ -25,49 +18,14 @@ fn single_stop_response() -> Vec<LlmResponse> {
     }]
 }
 
-fn make_deps(
-    provider: Arc<MockLlmProvider>,
-    agents_md: Option<String>,
-    audit_dir: &std::path::Path,
-    cwd: &std::path::Path,
-) -> Arc<AgentDeps> {
-    let registry = Arc::new(ToolRegistry::new());
-    let policy = Arc::new(DefaultPolicyEngine::new(DefaultPolicyConfig::default()));
-    let pipeline = Pipeline {
-        registry: registry.clone(),
-        policy,
-        home: None,
-    };
-    let writer = AuditWriter::open(audit_dir, "test-session").unwrap();
+fn policy_ctx_for(cwd: &std::path::Path) -> PolicyContext {
     let canonical = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-    Arc::new(AgentDeps {
-        provider,
-        pipeline,
-        executor: ToolExecutor {
-            registry,
-            timeout: Duration::from_secs(5),
-            max_output_bytes: 4096,
-            env: Default::default(),
-            cancel: CancellationToken::new(),
-        },
-        gate: Arc::new(AlwaysYesGate),
-        audit: Mutex::new(writer),
-        redactor: Redactor::default_audit(),
-        bounds: AgentBounds {
-            max_iterations: 5,
-            max_tool_calls_per_iteration: 5,
-            max_schema_repair_attempts: 2,
-        },
-        policy_ctx: PolicyContext {
-            cwd: canonical.clone(),
-            workspace_root: canonical.clone(),
-            allowed_roots: vec![canonical],
-            sensitive_path_patterns: vec![],
-        },
-        sensitive_patterns: vec![],
-        model_label: "mock:test".into(),
-        system_prompt: Arc::new(StaticSystemPrompt { agents_md }),
-    })
+    PolicyContext {
+        cwd: canonical.clone(),
+        workspace_root: canonical.clone(),
+        allowed_roots: vec![canonical],
+        sensitive_path_patterns: vec![],
+    }
 }
 
 /// LlmRequest.system starts with the persona, no AGENTS.md block when absent.
@@ -76,8 +34,15 @@ async fn system_starts_with_persona_no_agents_md() {
     let tmp = tempfile::tempdir().unwrap();
     let audit_dir = tempfile::tempdir().unwrap();
 
-    let provider = Arc::new(MockLlmProvider::new(single_stop_response()));
-    let deps = make_deps(provider.clone(), None, audit_dir.path(), tmp.path());
+    let (deps, provider) = build_test_deps_with_agents_md(
+        Arc::new(ToolRegistry::new()),
+        single_stop_response(),
+        Arc::new(AlwaysYesGate),
+        audit_dir.path(),
+        policy_ctx_for(tmp.path()),
+        vec![],
+        None,
+    );
 
     let mut agent = AgentLoop {
         deps,
@@ -108,12 +73,14 @@ async fn system_contains_agents_md_when_present() {
     let audit_dir = tempfile::tempdir().unwrap();
 
     let agents_md_content = "Be terse and factual.";
-    let provider = Arc::new(MockLlmProvider::new(single_stop_response()));
-    let deps = make_deps(
-        provider.clone(),
-        Some(agents_md_content.to_string()),
+    let (deps, provider) = build_test_deps_with_agents_md(
+        Arc::new(ToolRegistry::new()),
+        single_stop_response(),
+        Arc::new(AlwaysYesGate),
         audit_dir.path(),
-        tmp.path(),
+        policy_ctx_for(tmp.path()),
+        vec![],
+        Some(agents_md_content.to_string()),
     );
 
     let mut agent = AgentLoop {
@@ -144,12 +111,14 @@ async fn agents_md_comes_after_persona() {
     let tmp = tempfile::tempdir().unwrap();
     let audit_dir = tempfile::tempdir().unwrap();
 
-    let provider = Arc::new(MockLlmProvider::new(single_stop_response()));
-    let deps = make_deps(
-        provider.clone(),
-        Some("some content".to_string()),
+    let (deps, provider) = build_test_deps_with_agents_md(
+        Arc::new(ToolRegistry::new()),
+        single_stop_response(),
+        Arc::new(AlwaysYesGate),
         audit_dir.path(),
-        tmp.path(),
+        policy_ctx_for(tmp.path()),
+        vec![],
+        Some("some content".to_string()),
     );
 
     let mut agent = AgentLoop {

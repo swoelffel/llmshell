@@ -53,7 +53,6 @@ impl LlmProvider for MockLlmProvider {
 }
 
 /// Build a standard `AgentDeps` for use in integration tests.
-#[allow(dead_code)]
 ///
 /// - `registry`: the tool registry (caller registers whatever tools are needed)
 /// - `responses`: scripted LLM responses consumed in order
@@ -61,7 +60,7 @@ impl LlmProvider for MockLlmProvider {
 /// - `audit_dir`: temp dir for the audit log
 /// - `policy_ctx`: policy context
 /// - `sensitive_patterns`: sensitive path patterns forwarded to the pipeline
-/// - `agents_md`: optional AGENTS.md content injected into the system prompt
+#[allow(dead_code)]
 pub fn build_test_deps(
     registry: Arc<ToolRegistry>,
     responses: Vec<LlmResponse>,
@@ -70,7 +69,7 @@ pub fn build_test_deps(
     policy_ctx: PolicyContext,
     sensitive_patterns: Vec<String>,
 ) -> Arc<AgentDeps> {
-    build_test_deps_with_agents_md(
+    let (deps, _) = build_test_deps_with_agents_md(
         registry,
         responses,
         gate,
@@ -78,9 +77,11 @@ pub fn build_test_deps(
         policy_ctx,
         sensitive_patterns,
         None,
-    )
+    );
+    deps
 }
 
+/// Variant returning the `MockLlmProvider` so tests can inspect captured requests.
 #[allow(dead_code)]
 pub fn build_test_deps_with_agents_md(
     registry: Arc<ToolRegistry>,
@@ -90,7 +91,7 @@ pub fn build_test_deps_with_agents_md(
     policy_ctx: PolicyContext,
     sensitive_patterns: Vec<String>,
     agents_md: Option<String>,
-) -> Arc<AgentDeps> {
+) -> (Arc<AgentDeps>, Arc<MockLlmProvider>) {
     let provider = Arc::new(MockLlmProvider::new(responses));
     let policy = Arc::new(DefaultPolicyEngine::new(DefaultPolicyConfig::default()));
     let pipeline = Pipeline {
@@ -99,8 +100,8 @@ pub fn build_test_deps_with_agents_md(
         home: None,
     };
     let writer = AuditWriter::open(audit_dir, "test-session").unwrap();
-    Arc::new(AgentDeps {
-        provider,
+    let deps = Arc::new(AgentDeps {
+        provider: provider.clone(),
         pipeline,
         executor: ToolExecutor {
             registry,
@@ -120,17 +121,18 @@ pub fn build_test_deps_with_agents_md(
         policy_ctx,
         sensitive_patterns,
         model_label: "mock:test".into(),
-        system_prompt: Arc::new(StaticSystemPrompt { agents_md }),
-    })
+        system_prompt: Arc::new(StaticSystemPrompt::new(agents_md)),
+    });
+    (deps, provider)
 }
 
 /// Convenience: build deps with `AlwaysYesGate` and no sensitive patterns, using
 /// a temp dir as the workspace cwd.
-#[allow(dead_code)]
 ///
 /// The path is canonicalized before being stored so that macOS symlink aliases
 /// (e.g. `/var` → `/private/var`) don't cause spurious `outside_workspace`
 /// policy denials.
+#[allow(dead_code)]
 pub fn build_simple_deps(
     registry: Arc<ToolRegistry>,
     responses: Vec<LlmResponse>,
