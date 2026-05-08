@@ -6,7 +6,7 @@ pub fn set_default_model(config_path: &Path, new_value: &str) -> anyhow::Result<
         .with_context(|| format!("read config {}", config_path.display()))?;
     let mut doc = original
         .parse::<toml_edit::DocumentMut>()
-        .with_context(|| "parse config.toml")?;
+        .with_context(|| format!("parse config {}", config_path.display()))?;
     doc["default_model"] = toml_edit::value(new_value);
     let serialized = doc.to_string();
     let tmp = config_path.with_extension("toml.tmp");
