@@ -1,0 +1,3 @@
+# llmsh-core
+
+Agent loop, REPL, configuration, and pipeline orchestration for LLMShell. Contains the iterative `Agent` (LLM call → tool-call fan-out → confirmation gate → execution → next iteration), the `Repl` that wraps `reedline` for interactive input and slash commands, the TOML `Config` loader with user/project merge, the `Pipeline` that enriches tool schemas and enforces policy, and the `ToolExecutor` that runs tools with timeout and cancellation. This crate is the integration hub: it wires together `llmsh-llm`, `llmsh-tools`, `llmsh-policy`, and `llmsh-audit` into a coherent, cancellable agent session.
