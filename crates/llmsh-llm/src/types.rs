@@ -3,7 +3,12 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum MessageRole { System, User, Assistant, Tool }
+pub enum MessageRole {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
@@ -31,7 +36,13 @@ pub struct ToolCall {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum FinishReason { Stop, ToolCalls, Length, Refusal, Error }
+pub enum FinishReason {
+    Stop,
+    ToolCalls,
+    Length,
+    Refusal,
+    Error,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct TokenUsage {
@@ -42,7 +53,11 @@ pub struct TokenUsage {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolPolicyHint { None, PreferTools, RequireTools }
+pub enum ToolPolicyHint {
+    None,
+    PreferTools,
+    RequireTools,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmRequest {
@@ -66,7 +81,12 @@ mod tests {
 
     #[test]
     fn message_roundtrip() {
-        let m = Message { role: MessageRole::User, content: "hi".into(), tool_call_id: None, name: None };
+        let m = Message {
+            role: MessageRole::User,
+            content: "hi".into(),
+            tool_call_id: None,
+            name: None,
+        };
         let s = serde_json::to_string(&m).unwrap();
         let back: Message = serde_json::from_str(&s).unwrap();
         assert_eq!(m, back);
