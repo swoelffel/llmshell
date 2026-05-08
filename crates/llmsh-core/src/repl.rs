@@ -1,5 +1,6 @@
 use crate::agent::{AgentDeps, AgentLoop};
 use crate::context::ContextBuilder;
+use crate::init::MachineAudit;
 use crate::input::{classify, InputKind};
 use crate::raw_shell::{resolve_shell, RiskScan};
 use llmsh_audit::event::{now_iso, AuditEvent};
@@ -95,7 +96,33 @@ impl Repl {
     async fn handle_meta(&mut self, cmd: &str, args: &[String]) -> anyhow::Result<()> {
         match cmd {
             "help" => {
-                println!("/help /exit /pwd /cd <path> /history /model");
+                println!("/help /exit /pwd /cd <path> /history /model /init");
+            }
+            "init" => {
+                let audit = MachineAudit::capture_with_tooling().await;
+                let host = audit.identity_host().to_string();
+                let os = audit.identity_os();
+                let user = audit.identity_user().to_string();
+                let tooling_count = audit.tooling_count();
+                let short = audit.render_short_summary();
+                let init_audit = audit.into_init_audit();
+                if let Err(e) = self.deps.memory.write_init_audit(&init_audit) {
+                    eprintln!("init: failed to write audit: {}", e);
+                } else {
+                    println!("{}", short);
+                    let _ =
+                        self.deps
+                            .audit
+                            .lock()
+                            .unwrap()
+                            .write(&AuditEvent::MachineAuditPerformed {
+                                ts: now_iso(),
+                                host,
+                                os,
+                                user,
+                                tooling_count,
+                            });
+                }
             }
             "pwd" => println!("{}", self.state.cwd.display()),
             "cd" => {
