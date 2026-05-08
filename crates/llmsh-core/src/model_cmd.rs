@@ -323,6 +323,7 @@ mod tests {
         ] {
             assert!(!is_chat_model(id), "{} should be excluded", id);
         }
+        assert!(!is_chat_model("omni-moderation-latest"));
     }
 
     #[test]

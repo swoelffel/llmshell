@@ -1,15 +1,29 @@
 mod common;
 
 use async_trait::async_trait;
+use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
+use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
+use llmsh_core::confirm::AlwaysYesGate;
+use llmsh_core::context::{ContextBuilder, MemorySystemPrompt};
+use llmsh_core::executor::ToolExecutor;
+use llmsh_core::memory::Memory;
 use llmsh_core::model_cmd::{set_model_flow, ModelCommandContext, ModelListCache};
+use llmsh_core::pipeline::Pipeline;
 use llmsh_llm::capabilities::{Capabilities, ToolCallingMode};
 use llmsh_llm::provider::LlmProvider;
-use llmsh_llm::types::{LlmRequest, LlmResponse, ModelInfo};
+use llmsh_llm::types::{FinishReason, LlmRequest, LlmResponse, ModelInfo};
+use llmsh_policy::context::PolicyContext;
+use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine};
+use llmsh_tools::registry::ToolRegistry;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 
 struct MockModelProvider {
     model: Arc<RwLock<String>>,
+    scripted: Mutex<Vec<LlmResponse>>,
+    captured: Mutex<Vec<LlmRequest>>,
 }
 
 #[async_trait]
@@ -25,8 +39,13 @@ impl LlmProvider for MockModelProvider {
         }
     }
 
-    async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        anyhow::bail!("not implemented in mock")
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        self.captured.lock().unwrap().push(req);
+        let mut s = self.scripted.lock().unwrap();
+        if s.is_empty() {
+            anyhow::bail!("no scripted responses");
+        }
+        Ok(s.remove(0))
     }
 
     async fn list_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
@@ -69,6 +88,8 @@ async fn set_model_flow_updates_shared_label() {
     let model_label = Arc::new(RwLock::new("openai:gpt-4o-mini".to_string()));
     let provider = MockModelProvider {
         model: model_label.clone(),
+        scripted: Mutex::new(vec![]),
+        captured: Mutex::new(vec![]),
     };
     let writer = AuditWriter::open(tmp_audit.path(), "test-model-switch").unwrap();
     let audit = Mutex::new(writer);
@@ -94,6 +115,8 @@ async fn set_model_flow_unknown_model_prints_error() {
     let model_label = Arc::new(RwLock::new("openai:gpt-4o-mini".to_string()));
     let provider = MockModelProvider {
         model: model_label.clone(),
+        scripted: Mutex::new(vec![]),
+        captured: Mutex::new(vec![]),
     };
     let writer = AuditWriter::open(tmp_audit.path(), "test-model-switch-err").unwrap();
     let audit = Mutex::new(writer);
@@ -107,17 +130,138 @@ async fn set_model_flow_unknown_model_prints_error() {
         audit: &audit,
     };
 
-    // Should not error but print to stderr and leave model unchanged
     let before = model_label.read().unwrap().clone();
     set_model_flow(&ctx, "completely-unknown-xyz")
         .await
         .unwrap();
     let after = model_label.read().unwrap().clone();
 
-    // Model label is not updated because OpenAI-style set_model was not called
-    // The model_label holds the Arc so if provider.set_model was not called it stays
     assert_eq!(
         before, after,
         "model_label should not change for unknown model"
+    );
+}
+
+fn stop_response(text: &str) -> LlmResponse {
+    LlmResponse {
+        message: Some(text.to_string()),
+        tool_calls: vec![],
+        finish_reason: FinishReason::Stop,
+        usage: None,
+    }
+}
+
+#[tokio::test]
+async fn rendered_system_prompt_reflects_model_switch() {
+    let workspace = tempfile::tempdir().unwrap();
+    let audit_dir = tempfile::tempdir().unwrap();
+    let canonical_ws =
+        std::fs::canonicalize(workspace.path()).unwrap_or_else(|_| workspace.path().to_path_buf());
+
+    let model_label = Arc::new(RwLock::new("gpt-4o-mini".to_string()));
+    let provider = Arc::new(MockModelProvider {
+        model: model_label.clone(),
+        scripted: Mutex::new(vec![stop_response("turn1"), stop_response("turn2")]),
+        captured: Mutex::new(vec![]),
+    });
+
+    let memory = Arc::new(Memory::open_in_memory().unwrap());
+    let system_prompt = Arc::new(MemorySystemPrompt::new(
+        None,
+        memory.clone(),
+        canonical_ws.clone(),
+        model_label.clone(),
+        Instant::now(),
+    ));
+
+    let registry = Arc::new(ToolRegistry::new());
+    let policy = Arc::new(DefaultPolicyEngine::new(DefaultPolicyConfig::default()));
+    let pipeline = Pipeline {
+        registry: registry.clone(),
+        policy,
+        home: None,
+    };
+    let writer = AuditWriter::open(audit_dir.path(), "test-prompt-update").unwrap();
+
+    let deps = Arc::new(AgentDeps {
+        provider: provider.clone(),
+        pipeline,
+        executor: ToolExecutor {
+            registry,
+            timeout: Duration::from_secs(5),
+            max_output_bytes: 4096,
+            env: Default::default(),
+            cancel: CancellationToken::new(),
+        },
+        gate: Arc::new(AlwaysYesGate),
+        audit: Mutex::new(writer),
+        redactor: Redactor::default_audit(),
+        bounds: AgentBounds {
+            max_iterations: 5,
+            max_tool_calls_per_iteration: 5,
+            max_schema_repair_attempts: 2,
+        },
+        policy_ctx: PolicyContext {
+            cwd: canonical_ws.clone(),
+            workspace_root: canonical_ws.clone(),
+            allowed_roots: vec![canonical_ws.clone()],
+            sensitive_path_patterns: vec![],
+        },
+        sensitive_patterns: vec![],
+        model_label: model_label.clone(),
+        system_prompt,
+        memory,
+    });
+
+    // Turn 1: capture initial system prompt.
+    {
+        let mut agent = AgentLoop {
+            deps: deps.clone(),
+            builder: ContextBuilder::new(4096),
+        };
+        agent.run("hello").await.unwrap();
+    }
+    let first_system = provider.captured.lock().unwrap()[0]
+        .system
+        .clone()
+        .unwrap_or_default();
+    assert!(
+        first_system.contains("model: gpt-4o-mini"),
+        "initial render must show model: gpt-4o-mini, got:\n{}",
+        first_system
+    );
+
+    // Switch model via the same flow the REPL uses.
+    let cache = ModelListCache::new();
+    let ctx = ModelCommandContext {
+        provider: provider.as_ref(),
+        model_label: &model_label,
+        cache: &cache,
+        config_path: None,
+        audit: &deps.audit,
+    };
+    set_model_flow(&ctx, "gpt-4o").await.unwrap();
+
+    // Turn 2: capture system prompt after switch.
+    {
+        let mut agent = AgentLoop {
+            deps: deps.clone(),
+            builder: ContextBuilder::new(4096),
+        };
+        agent.run("again").await.unwrap();
+    }
+    let second_system = provider.captured.lock().unwrap()[1]
+        .system
+        .clone()
+        .unwrap_or_default();
+    assert!(
+        second_system.contains("model: gpt-4o"),
+        "after switch the prompt must show model: gpt-4o, got:\n{}",
+        second_system
+    );
+    assert!(
+        !second_system.contains("model: gpt-4o-mini"),
+        "old model id must not appear after switch, got:\n{}",
+        second_system
     );
 }
