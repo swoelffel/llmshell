@@ -47,10 +47,11 @@ impl AgentLoop {
     pub async fn run(&mut self, user_input: &str) -> anyhow::Result<LoopResult> {
         let dep = self.deps.clone();
 
+        let user_input_red = dep.redactor.redact(user_input).0;
         if let Err(e) = dep.memory.append_action(&RecentAction {
             ts: now_iso(),
             kind: ActionKind::UserInput,
-            summary: user_input.to_string(),
+            summary: user_input_red,
             detail_json: None,
         }) {
             tracing::warn!("memory append_action(user_input) failed: {}", e);
@@ -134,7 +135,7 @@ impl AgentLoop {
                     if let Err(e) = dep.memory.append_action(&RecentAction {
                         ts: now_iso(),
                         kind: ActionKind::Assistant,
-                        summary: text.clone(),
+                        summary: red.clone(),
                         detail_json: None,
                     }) {
                         tracing::warn!("memory append_action(assistant) failed: {}", e);
