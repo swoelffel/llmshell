@@ -23,7 +23,7 @@ pub struct ReplState {
 pub struct Repl {
     pub deps: Arc<AgentDeps>,
     pub state: ReplState,
-    pub max_llm_output_bytes: usize,
+    pub builder: ContextBuilder,
     pub raw_shell: Option<String>,
     pub risk_scan: RiskScan,
     pub root_cancel: CancellationToken,
@@ -62,9 +62,16 @@ impl Repl {
                         InputKind::Natural(t) => {
                             let mut loop_state = AgentLoop {
                                 deps: self.deps.clone(),
-                                builder: ContextBuilder::new(self.max_llm_output_bytes),
+                                builder: std::mem::replace(
+                                    &mut self.builder,
+                                    ContextBuilder::new(0),
+                                ),
                             };
-                            match loop_state.run(&t).await {
+                            let result = loop_state.run(&t).await;
+                            // restore the builder (now mutated with this turn's
+                            // user/assistant/tool messages) back into the repl.
+                            self.builder = loop_state.builder;
+                            match result {
                                 Ok(r) => {
                                     if let Some(text) = r.assistant_text {
                                         println!("{}", text);
@@ -111,7 +118,9 @@ impl Repl {
     async fn handle_meta(&mut self, cmd: &str, args: &[String]) -> anyhow::Result<()> {
         match cmd {
             "help" => {
-                println!("/help /exit /pwd /cd <path> /history /model [list|set <id>] /init");
+                println!(
+                    "/help /exit /clear /pwd /cd <path> /history /model [list|set <id>] /init"
+                );
             }
             "init" => {
                 let audit = MachineAudit::capture_with_tooling().await;
@@ -178,6 +187,14 @@ impl Repl {
                 if let Err(e) = handle_model_command(&ctx, args).await {
                     eprintln!("model command error: {}", e);
                 }
+            }
+            "clear" => {
+                let kept_capacity = self.builder.messages.len();
+                self.builder.messages.clear();
+                println!(
+                    "Conversation cleared ({} message(s) dropped).",
+                    kept_capacity
+                );
             }
             other => eprintln!("unknown meta command: /{}", other),
         }

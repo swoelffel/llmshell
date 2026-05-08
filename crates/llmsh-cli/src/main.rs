@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
             allowed_roots,
             history_recent: vec![],
         },
-        max_llm_output_bytes: cfg.limits.max_llm_output_bytes,
+        builder: llmsh_core::context::ContextBuilder::new(cfg.limits.max_llm_output_bytes),
         raw_shell: cfg.shell.raw_shell.clone(),
         risk_scan: RiskScan::default(),
         root_cancel: cancel,

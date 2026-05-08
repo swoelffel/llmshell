@@ -167,6 +167,9 @@ impl AgentLoop {
                     }) {
                         tracing::warn!("memory append_action(assistant) failed: {}", e);
                     }
+                    // Append the final assistant reply so the persisted builder
+                    // retains the full conversation history for subsequent turns.
+                    self.builder.append_assistant(&text);
                     return Ok(LoopResult {
                         assistant_text: Some(text),
                         stopped_reason: "stop".into(),

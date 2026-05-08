@@ -285,6 +285,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn builder_persists_messages_across_runs() {
+        // The ContextBuilder must accumulate messages when reused across
+        // multiple agent turns — that's how the LLM sees the conversation.
+        let mut b = ContextBuilder::new(4096);
+        b.append_user("first turn");
+        b.append_assistant("first reply");
+        b.append_user("second turn");
+        b.append_assistant("second reply");
+
+        assert_eq!(b.messages.len(), 4);
+        assert_eq!(b.messages[0].role, MessageRole::User);
+        assert_eq!(b.messages[0].content, "first turn");
+        assert_eq!(b.messages[1].role, MessageRole::Assistant);
+        assert_eq!(b.messages[1].content, "first reply");
+        assert_eq!(b.messages[2].role, MessageRole::User);
+        assert_eq!(b.messages[2].content, "second turn");
+        assert_eq!(b.messages[3].role, MessageRole::Assistant);
+        assert_eq!(b.messages[3].content, "second reply");
+    }
+
+    #[test]
+    fn clearing_messages_resets_to_empty_but_preserves_settings() {
+        let mut b = ContextBuilder::new(8192);
+        let original_max = b.max_llm_output_bytes;
+        b.append_user("hello");
+        b.append_assistant("hi");
+        assert_eq!(b.messages.len(), 2);
+
+        b.messages.clear();
+        assert!(b.messages.is_empty());
+        assert_eq!(b.max_llm_output_bytes, original_max);
+    }
+
+    #[test]
     fn append_assistant_with_tool_calls_then_tool_results_orders_correctly() {
         use crate::executor::{ExecutionStatus, StepResult};
         use llmsh_llm::types::ToolCall;
