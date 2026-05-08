@@ -153,4 +153,8 @@ async fn redaction_no_literal_secrets_in_audit() {
         !log.contains(FAKE_PEM_BODY),
         "literal PEM body must not appear in audit log"
     );
+    assert!(
+        !log.contains(FAKE_JWT),
+        "literal JWT must not appear in audit log"
+    );
 }
