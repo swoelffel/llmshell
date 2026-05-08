@@ -68,8 +68,7 @@ impl AgentLoop {
                 tools: dep.pipeline.registry.specs(),
                 tool_policy: ToolPolicyHint::PreferTools,
             };
-            let messages_digest =
-                canonical_json_digest(&serde_json::to_value(&req.messages)?);
+            let messages_digest = canonical_json_digest(&serde_json::to_value(&req.messages)?);
             let _ = dep.audit.lock().unwrap().write(&AuditEvent::LlmRequest {
                 ts: now_iso(),
                 model: dep.model_label.clone(),
@@ -101,17 +100,24 @@ impl AgentLoop {
                 message_redacted: resp.message.as_ref().map(|_| msg_red),
                 tool_call_count: resp.tool_calls.len(),
                 tool_calls_digest,
-                usage: resp.usage.as_ref().map(|u| serde_json::to_value(u).unwrap()),
+                usage: resp
+                    .usage
+                    .as_ref()
+                    .map(|u| serde_json::to_value(u).unwrap()),
             });
 
             match resp.finish_reason {
                 FinishReason::Stop => {
                     let text = resp.message.unwrap_or_default();
                     let (red, _) = dep.redactor.redact(&text);
-                    let _ = dep.audit.lock().unwrap().write(&AuditEvent::AssistantMessage {
-                        ts: now_iso(),
-                        text_redacted: red.clone(),
-                    });
+                    let _ = dep
+                        .audit
+                        .lock()
+                        .unwrap()
+                        .write(&AuditEvent::AssistantMessage {
+                            ts: now_iso(),
+                            text_redacted: red.clone(),
+                        });
                     return Ok(LoopResult {
                         assistant_text: Some(text),
                         stopped_reason: "stop".into(),
@@ -148,9 +154,7 @@ impl AgentLoop {
                     });
                 }
                 FinishReason::ToolCalls => {
-                    if resp.tool_calls.len()
-                        > dep.bounds.max_tool_calls_per_iteration as usize
-                    {
+                    if resp.tool_calls.len() > dep.bounds.max_tool_calls_per_iteration as usize {
                         let _ = dep.audit.lock().unwrap().write(&AuditEvent::Error {
                             ts: now_iso(),
                             code: "too_many_tool_calls".into(),
@@ -164,11 +168,9 @@ impl AgentLoop {
                     }
 
                     let model_plan = ModelPlan::from(resp);
-                    let outcome = dep.pipeline.check(
-                        model_plan,
-                        &dep.policy_ctx,
-                        &dep.sensitive_patterns,
-                    );
+                    let outcome =
+                        dep.pipeline
+                            .check(model_plan, &dep.policy_ctx, &dep.sensitive_patterns);
 
                     if !outcome.schema_errors.is_empty()
                         && schema_attempts < dep.bounds.max_schema_repair_attempts
@@ -202,21 +204,25 @@ impl AgentLoop {
                         steps_summary: summary,
                     });
                     for s in &outcome.plan.steps {
-                        let _ = dep.audit.lock().unwrap().write(&AuditEvent::PolicyDecision {
-                            ts: now_iso(),
-                            plan_id: plan_id.clone(),
-                            step_id: s.call.id.clone(),
-                            effective_risk: format!("{:?}", s.decision.effective_risk)
-                                .to_lowercase(),
-                            action: serde_json::to_value(&s.decision.action)?,
-                            flags: s
-                                .decision
-                                .flags
-                                .iter()
-                                .map(|f| format!("{:?}", f))
-                                .collect(),
-                            reasons: s.decision.reasons.clone(),
-                        });
+                        let _ = dep
+                            .audit
+                            .lock()
+                            .unwrap()
+                            .write(&AuditEvent::PolicyDecision {
+                                ts: now_iso(),
+                                plan_id: plan_id.clone(),
+                                step_id: s.call.id.clone(),
+                                effective_risk: format!("{:?}", s.decision.effective_risk)
+                                    .to_lowercase(),
+                                action: serde_json::to_value(&s.decision.action)?,
+                                flags: s
+                                    .decision
+                                    .flags
+                                    .iter()
+                                    .map(|f| format!("{:?}", f))
+                                    .collect(),
+                                reasons: s.decision.reasons.clone(),
+                            });
                     }
 
                     if outcome.plan.has_deny() {
@@ -231,8 +237,11 @@ impl AgentLoop {
 
                     if outcome.plan.requires_confirmation() {
                         let granted = dep.gate.ask(&outcome.plan);
-                        let _ =
-                            dep.audit.lock().unwrap().write(&AuditEvent::ConfirmationAsked {
+                        let _ = dep
+                            .audit
+                            .lock()
+                            .unwrap()
+                            .write(&AuditEvent::ConfirmationAsked {
                                 ts: now_iso(),
                                 plan_id: plan_id.clone(),
                                 phrase: outcome.plan.steps.iter().find_map(|s| {
@@ -258,21 +267,21 @@ impl AgentLoop {
                     // Execute
                     for s in &outcome.plan.steps {
                         let args_digest = canonical_json_digest(&s.call.args);
-                        let _ =
-                            dep.audit
-                                .lock()
-                                .unwrap()
-                                .write(&AuditEvent::ToolExecutionStart {
-                                    ts: now_iso(),
-                                    plan_id: plan_id.clone(),
-                                    step_id: s.call.id.clone(),
-                                    tool: s.call.tool_name.clone(),
-                                    args_digest,
-                                    args_preview_redacted: Some(redact_args_preview(
-                                        &s.call.args,
-                                        &dep.redactor,
-                                    )),
-                                });
+                        let _ = dep
+                            .audit
+                            .lock()
+                            .unwrap()
+                            .write(&AuditEvent::ToolExecutionStart {
+                                ts: now_iso(),
+                                plan_id: plan_id.clone(),
+                                step_id: s.call.id.clone(),
+                                tool: s.call.tool_name.clone(),
+                                args_digest,
+                                args_preview_redacted: Some(redact_args_preview(
+                                    &s.call.args,
+                                    &dep.redactor,
+                                )),
+                            });
                     }
                     let results = dep
                         .executor
@@ -290,21 +299,21 @@ impl AgentLoop {
                             .and_then(|o| o.stderr.clone())
                             .map(|s| dep.redactor.redact(&s).0);
                         let truncated = r.output.as_ref().map(|o| o.truncated).unwrap_or(false);
-                        let _ =
-                            dep.audit
-                                .lock()
-                                .unwrap()
-                                .write(&AuditEvent::ToolExecutionEnd {
-                                    ts: now_iso(),
-                                    plan_id: plan_id.clone(),
-                                    step_id: r.step_id.clone(),
-                                    status: format!("{:?}", r.status).to_lowercase(),
-                                    exit_code: r.output.as_ref().and_then(|o| o.exit_code),
-                                    stdout_redacted: stdout_red,
-                                    stderr_redacted: stderr_red,
-                                    truncated,
-                                    duration_ms: r.duration.as_millis() as u64,
-                                });
+                        let _ = dep
+                            .audit
+                            .lock()
+                            .unwrap()
+                            .write(&AuditEvent::ToolExecutionEnd {
+                                ts: now_iso(),
+                                plan_id: plan_id.clone(),
+                                step_id: r.step_id.clone(),
+                                status: format!("{:?}", r.status).to_lowercase(),
+                                exit_code: r.output.as_ref().and_then(|o| o.exit_code),
+                                stdout_redacted: stdout_red,
+                                stderr_redacted: stderr_red,
+                                truncated,
+                                duration_ms: r.duration.as_millis() as u64,
+                            });
                     }
                     self.builder.append_tool_results(&results);
                 }

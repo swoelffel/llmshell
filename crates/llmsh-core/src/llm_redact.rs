@@ -4,8 +4,8 @@ pub struct LlmRedactor {
     patterns: Vec<(String, Regex)>,
 }
 
-impl LlmRedactor {
-    pub fn default() -> Self {
+impl Default for LlmRedactor {
+    fn default() -> Self {
         // Stricter than audit (LLM output is exfiltrated to a third party).
         let raw = [
             ("openai_key", r"sk-[A-Za-z0-9]{20,}"),
@@ -29,7 +29,9 @@ impl LlmRedactor {
             .collect();
         Self { patterns }
     }
+}
 
+impl LlmRedactor {
     pub fn redact(&self, s: &str) -> (String, usize) {
         let mut hits = 0;
         let mut out = s.to_string();

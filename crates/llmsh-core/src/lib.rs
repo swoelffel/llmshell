@@ -8,3 +8,4 @@ pub mod llm_redact;
 pub mod pipeline;
 pub mod plan;
 pub mod raw_shell;
+pub mod repl;
