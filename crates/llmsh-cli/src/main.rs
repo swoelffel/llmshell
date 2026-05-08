@@ -4,10 +4,12 @@ use llmsh_audit::redact::Redactor;
 use llmsh_audit::session::new_session_id;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_core::agent::{AgentBounds, AgentDeps};
+use llmsh_core::agents_md::load_agents_md;
 use llmsh_core::config::load::{load_or_create_user, load_project, user_config_path};
 use llmsh_core::config::merge::merge_project;
 use llmsh_core::config::Config;
 use llmsh_core::confirm::StdinConfirmationGate;
+use llmsh_core::context::StaticSystemPrompt;
 use llmsh_core::executor::ToolExecutor;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
@@ -140,6 +142,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // 6. Agent deps
+    let agents_md = load_agents_md();
+    let system_prompt = Arc::new(StaticSystemPrompt { agents_md });
     let deps = Arc::new(AgentDeps {
         provider,
         pipeline,
@@ -155,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
         policy_ctx,
         sensitive_patterns: cfg.policy.sensitive_paths.patterns.clone(),
         model_label: cfg.default_model.clone(),
+        system_prompt,
     });
 
     let repl = Repl {

@@ -3,7 +3,7 @@ mod common;
 use async_trait::async_trait;
 use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
 use llmsh_core::confirm::AlwaysYesGate;
-use llmsh_core::context::ContextBuilder;
+use llmsh_core::context::{ContextBuilder, StaticSystemPrompt};
 use llmsh_core::executor::ToolExecutor;
 use llmsh_llm::types::{FinishReason, LlmResponse, ToolCall};
 use llmsh_policy::context::PolicyContext;
@@ -102,6 +102,7 @@ async fn external_cancel_recorded_in_audit() {
         },
         sensitive_patterns: vec![],
         model_label: "mock:test".into(),
+        system_prompt: Arc::new(StaticSystemPrompt { agents_md: None }),
     });
 
     // Fire the cancel token after 100 ms while the agent loop is running.

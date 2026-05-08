@@ -5,7 +5,7 @@ use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
 use llmsh_core::confirm::AlwaysYesGate;
-use llmsh_core::context::ContextBuilder;
+use llmsh_core::context::{ContextBuilder, StaticSystemPrompt};
 use llmsh_core::executor::ToolExecutor;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_llm::types::{FinishReason, LlmResponse, ToolCall};
@@ -85,6 +85,7 @@ async fn max_iterations_stops_loop() {
         },
         sensitive_patterns: vec![],
         model_label: "mock:test".into(),
+        system_prompt: Arc::new(StaticSystemPrompt { agents_md: None }),
     });
 
     let mut agent = AgentLoop {

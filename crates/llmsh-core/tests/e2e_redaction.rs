@@ -69,6 +69,7 @@ async fn redaction_no_literal_secrets_in_audit() {
         use llmsh_audit::writer::AuditWriter;
         use llmsh_core::agent::{AgentBounds, AgentDeps};
         use llmsh_core::confirm::AlwaysYesGate;
+        use llmsh_core::context::StaticSystemPrompt;
         use llmsh_core::executor::ToolExecutor;
         use llmsh_core::pipeline::Pipeline;
         use llmsh_policy::context::PolicyContext;
@@ -109,6 +110,7 @@ async fn redaction_no_literal_secrets_in_audit() {
             },
             sensitive_patterns: vec![],
             model_label: "mock:test".into(),
+            system_prompt: Arc::new(StaticSystemPrompt { agents_md: None }),
         })
     };
 

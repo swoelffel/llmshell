@@ -1,4 +1,4 @@
-use crate::context::ContextBuilder;
+use crate::context::{ContextBuilder, SystemPromptSource};
 use crate::executor::ToolExecutor;
 use crate::pipeline::Pipeline;
 use crate::plan::ModelPlan;
@@ -28,6 +28,7 @@ pub struct AgentDeps {
     pub policy_ctx: PolicyContext,
     pub sensitive_patterns: Vec<String>,
     pub model_label: String,
+    pub system_prompt: Arc<dyn SystemPromptSource>,
 }
 
 pub struct AgentLoop {
@@ -63,7 +64,7 @@ impl AgentLoop {
             }
 
             let req = LlmRequest {
-                system: Some(crate::context::SYSTEM_PROMPT.into()),
+                system: Some(dep.system_prompt.current()),
                 messages: self.builder.messages.clone(),
                 tools: dep.pipeline.registry.specs(),
                 tool_policy: ToolPolicyHint::PreferTools,
