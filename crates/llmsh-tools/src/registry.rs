@@ -14,19 +14,35 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub fn new() -> Self { Self { tools: HashMap::new() } }
-    pub fn register(&mut self, t: Arc<dyn Tool>) { self.tools.insert(t.name().to_string(), t); }
-    pub fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.values().map(|t| ToolSpec {
-            name: t.name().to_string(),
-            description: t.description().to_string(),
-            input_schema: t.input_schema(),
-        }).collect()
+    pub fn new() -> Self {
+        Self {
+            tools: HashMap::new(),
+        }
     }
-    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> { self.tools.get(name).cloned() }
+    pub fn register(&mut self, t: Arc<dyn Tool>) {
+        self.tools.insert(t.name().to_string(), t);
+    }
+    pub fn specs(&self) -> Vec<ToolSpec> {
+        self.tools
+            .values()
+            .map(|t| ToolSpec {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                input_schema: t.input_schema(),
+            })
+            .collect()
+    }
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.get(name).cloned()
+    }
     pub fn validate_call(&self, call: &ToolCall) -> Result<Arc<dyn Tool>, RegistryError> {
-        self.get(&call.name).ok_or_else(|| RegistryError::NotFound(call.name.clone()))
+        self.get(&call.name)
+            .ok_or_else(|| RegistryError::NotFound(call.name.clone()))
     }
 }
 
-impl Default for ToolRegistry { fn default() -> Self { Self::new() } }
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}

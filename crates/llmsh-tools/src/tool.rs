@@ -8,7 +8,13 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolCategory { Filesystem, Process, Git, Network, System }
+pub enum ToolCategory {
+    Filesystem,
+    Process,
+    Git,
+    Network,
+    System,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolOutput {
