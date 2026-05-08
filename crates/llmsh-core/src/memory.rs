@@ -112,51 +112,40 @@ impl Memory {
             .lock()
             .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
 
-        let version: Option<i64> = conn
-            .query_row(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'",
-                [],
-                |row| row.get(0),
-            )
-            .ok()
-            .and_then(|_name: String| {
-                conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0))
-                    .ok()
-            });
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY
+            );
+            CREATE TABLE IF NOT EXISTS init_audit (
+                id           INTEGER PRIMARY KEY CHECK (id = 1),
+                written_at   TEXT NOT NULL,
+                host         TEXT NOT NULL,
+                os           TEXT NOT NULL,
+                kernel       TEXT NOT NULL,
+                user         TEXT NOT NULL,
+                home         TEXT NOT NULL,
+                shell        TEXT,
+                summary_md   TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS recent_actions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           TEXT NOT NULL,
+                kind         TEXT NOT NULL,
+                summary      TEXT NOT NULL,
+                detail_json  TEXT
+            );
+            INSERT OR IGNORE INTO schema_version (version) VALUES (1);",
+        )
+        .context("run schema v1 migrations")?;
 
-        match version {
-            None => {
-                conn.execute_batch(
-                    "CREATE TABLE schema_version (
-                        version INTEGER PRIMARY KEY
-                    );
-                    CREATE TABLE init_audit (
-                        id           INTEGER PRIMARY KEY CHECK (id = 1),
-                        written_at   TEXT NOT NULL,
-                        host         TEXT NOT NULL,
-                        os           TEXT NOT NULL,
-                        kernel       TEXT NOT NULL,
-                        user         TEXT NOT NULL,
-                        home         TEXT NOT NULL,
-                        shell        TEXT,
-                        summary_md   TEXT NOT NULL
-                    );
-                    CREATE TABLE recent_actions (
-                        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                        ts           TEXT NOT NULL,
-                        kind         TEXT NOT NULL,
-                        summary      TEXT NOT NULL,
-                        detail_json  TEXT
-                    );
-                    CREATE INDEX idx_recent_actions_ts ON recent_actions(ts DESC);
-                    INSERT INTO schema_version (version) VALUES (1);",
-                )
-                .context("run schema v1 migrations")?;
-            }
-            Some(1) => {}
-            Some(v) => {
-                anyhow::bail!("memory db schema version {} is newer than supported (1)", v);
-            }
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .context("read schema_version")?;
+        if version > 1 {
+            anyhow::bail!(
+                "memory db schema version {} is newer than supported (1)",
+                version
+            );
         }
 
         // WAL mode is not supported for in-memory databases.
