@@ -12,6 +12,13 @@ pub fn set_default_model(config_path: &Path, new_value: &str) -> anyhow::Result<
     let tmp = config_path.with_extension("toml.tmp");
     std::fs::write(&tmp, &serialized).with_context(|| "write tmp config")?;
     std::fs::rename(&tmp, config_path).with_context(|| "rename tmp config")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(config_path, perms)
+            .with_context(|| format!("set perms on {}", config_path.display()))?;
+    }
     Ok(())
 }
 

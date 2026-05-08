@@ -67,3 +67,25 @@ fn file_is_intact_after_write() {
     let parsed: toml::Value = toml::from_str(&result).expect("must be valid TOML");
     assert_eq!(parsed["default_model"].as_str(), Some("openai:gpt-4o"));
 }
+
+#[cfg(unix)]
+#[test]
+fn perms_are_0600_after_set_default_model() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("config.toml");
+    let original = "default_model = \"openai:gpt-4o-mini\"\n";
+    std::fs::write(&path, original).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    set_default_model(&path, "openai:gpt-4o").unwrap();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(
+        mode & 0o777,
+        0o600,
+        "config file must be 0600 after set_default_model, got {:o}",
+        mode & 0o777
+    );
+}
