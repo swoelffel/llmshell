@@ -21,6 +21,20 @@ pub struct TurnStats {
     pub latency: Duration,
     /// Resolved cost in USD; `None` when model has no price entry.
     pub cost_usd: Option<f64>,
+    /// Tool steps executed *during* the turn (cleared next turn).
+    pub tool_steps: Vec<ToolStepStats>,
+    /// Number of schema repair attempts in this turn.
+    pub schema_repair_attempts: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolStepStats {
+    pub tool: String,
+    pub status: String,
+    pub duration: Duration,
+    pub output_bytes: usize,
+    pub risk: String,
+    pub flags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -57,6 +71,8 @@ impl SessionStats {
             finish_reason,
             latency,
             cost_usd: cost,
+            tool_steps: Vec::new(),
+            schema_repair_attempts: 0,
         });
 
         self.totals.turns += 1;

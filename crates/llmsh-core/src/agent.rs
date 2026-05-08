@@ -224,6 +224,11 @@ impl AgentLoop {
                         for (id, msg) in &outcome.schema_errors {
                             self.builder.append_schema_error(id, msg);
                         }
+                        if let Ok(mut s) = dep.stats.write() {
+                            if let Some(t) = s.last_turn.as_mut() {
+                                t.schema_repair_attempts = schema_attempts;
+                            }
+                        }
                         continue;
                     }
 
@@ -359,6 +364,38 @@ impl AgentLoop {
                                 truncated,
                                 duration_ms: r.duration.as_millis() as u64,
                             });
+                    }
+                    {
+                        let plan_steps = &outcome.plan.steps;
+                        if let Ok(mut s) = dep.stats.write() {
+                            if let Some(t) = s.last_turn.as_mut() {
+                                for r in &results {
+                                    let step =
+                                        plan_steps.iter().find(|step| step.call.id == r.step_id);
+                                    let (risk, flags) = match step {
+                                        Some(p) => (
+                                            format!("{:?}", p.decision.effective_risk),
+                                            p.decision
+                                                .flags
+                                                .iter()
+                                                .map(|f| format!("{:?}", f))
+                                                .collect(),
+                                        ),
+                                        None => ("Unknown".to_string(), vec![]),
+                                    };
+                                    let bytes =
+                                        r.output.as_ref().map(|o| o.stdout.len()).unwrap_or(0);
+                                    t.tool_steps.push(crate::session_stats::ToolStepStats {
+                                        tool: r.tool_name.clone(),
+                                        status: format!("{:?}", r.status).to_lowercase(),
+                                        duration: r.duration,
+                                        output_bytes: bytes,
+                                        risk,
+                                        flags,
+                                    });
+                                }
+                            }
+                        }
                     }
                     for r in &results {
                         let status = format!("{:?}", r.status).to_lowercase();

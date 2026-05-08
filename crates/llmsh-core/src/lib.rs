@@ -17,3 +17,4 @@ pub mod session_stats;
 pub mod status_prompt;
 pub mod sysctx;
 pub mod text;
+pub mod verbose_print;

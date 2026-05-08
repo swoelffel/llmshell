@@ -69,6 +69,16 @@ impl Repl {
                                     if let Some(text) = r.assistant_text {
                                         println!("{}", text);
                                     }
+                                    let level = self.deps.verbose;
+                                    if level > 0 {
+                                        if let Ok(s) = self.deps.stats.read() {
+                                            crate::verbose_print::print_turn_verbose(
+                                                &mut std::io::stderr(),
+                                                &s,
+                                                level,
+                                            );
+                                        }
+                                    }
                                 }
                                 Err(e) => eprintln!("error: {}", e),
                             }
