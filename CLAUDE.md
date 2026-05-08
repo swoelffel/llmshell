@@ -34,33 +34,35 @@ Useful env vars: `LLMSH_DEBUG=1` (tracing to stderr), `LLMSH_NO_AUDIT=1` (disabl
 
 Seven crates in [crates/](crates/), wired together by [llmsh-core](crates/llmsh-core/) and bootstrapped by [llmsh-cli/src/main.rs](crates/llmsh-cli/src/main.rs):
 
-- **llmsh-llm** — `LlmProvider` trait, message/tool-call types, `Capabilities` (tool-calling mode, JSON mode, parallel calls).
-- **llmsh-llm-openai** — OpenAI-compatible HTTP impl. Mapping between internal types and wire format lives in `mapping.rs` / `wire.rs`; keep these symmetric.
-- **llmsh-policy** — `PolicyEngine` classifies each tool call into a `RiskLevel` and returns a `RiskAction` (`Allow` / `Confirm` / `Deny`). `phrase.rs` and `sensitive.rs` drive heuristics; `paths.rs` resolves filesystem scope against allowed roots.
-- **llmsh-tools** — Built-in tools (`read_file`, `list_directory`, `run_process`) behind a `Tool` trait, exposed through a `ToolRegistry`. `enrich.rs` adds JSON-schema enrichment that the LLM consumes.
-- **llmsh-audit** — Append-only newline-JSON audit writer with hash-chained `digest`, redaction (`redact.rs`), session ids, and event taxonomy (`event.rs`). Treat the chain as load-bearing — never mutate a written line.
-- **llmsh-core** — Integration hub. Key pieces:
-  - `agent::AgentLoop` — the iterate-until-done loop: build context → call provider → if tool calls, run them through the pipeline; bounded by `AgentBounds` (`max_iterations`, `max_tool_calls_per_iteration`, `max_schema_repair_attempts`).
-  - `pipeline::Pipeline` — schema enrichment + policy classification + sensitive-path checks before a tool runs.
-  - `executor::ToolExecutor` — runs tools with per-tool timeout and a `CancellationToken`.
-  - `confirm::ConfirmationGate` — trait used to prompt for `Confirm`-level actions; tests use `AlwaysYesGate`/`AlwaysNoGate`.
-  - `repl::Repl` — reedline-backed input, slash commands, session state.
-  - `config/` — TOML loader with user + project merge.
+- **llmsh-llm** — `LlmProvider` trait, neutral message/tool-call types, `Capabilities`.
+- **llmsh-llm-openai** — OpenAI-compatible HTTP impl. Mapping in `mapping.rs` / `wire.rs`.
+- **llmsh-policy** — `PolicyEngine` returns `RiskAction` (`Allow` / `Confirm` / `Deny`). See [.claude/rules/policy-rules.md](.claude/rules/policy-rules.md).
+- **llmsh-tools** — `read_file`, `list_directory`, `run_process` behind a `Tool` trait + `ToolRegistry`.
+- **llmsh-audit** — append-only JSONL with hash-chained `digest`, redactor, session ids, event taxonomy. See [.claude/rules/audit-invariants.md](.claude/rules/audit-invariants.md).
+- **llmsh-core** — integration hub:
+  - `agent::AgentLoop` — bounded iterate-until-done loop (`AgentBounds`).
+  - `pipeline::Pipeline` — schema enrichment + policy classification + sensitive-path checks.
+  - `executor::ToolExecutor` — per-tool timeout + `CancellationToken`.
+  - `confirm::ConfirmationGate` — trait used to prompt for `Confirm`-level actions.
+  - `repl::Repl` — reedline-backed input + slash commands.
   - `context.rs` — `SystemPromptBuilder` composes the per-turn system prompt as 5 ordered sections (persona, AGENTS.md, long-term memory, runtime context, recent activity). `SystemPromptSource` trait + `StaticSystemPrompt` / `MemorySystemPrompt` impls. **Stable→dynamic ordering is load-bearing for OpenAI's automatic prompt cache — don't reorder.**
   - `llm_redact.rs`, `raw_shell.rs` — redaction at the LLM boundary, raw-shell risk scan.
-- **llmsh-cli** — `clap`/`tokio` entry point that constructs every dependency and starts the REPL.
+- **llmsh-cli** — `clap`/`tokio` entry point.
 
 ### Request flow
 
-`Repl` reads a line → `AgentLoop::run` appends to `ContextBuilder`, requests completion from the `LlmProvider` with the registry's tool specs → on `tool_calls`, each goes through `Pipeline` (schema check, `PolicyEngine` classification, sensitive-path gate) → if `Confirm`, the `ConfirmationGate` prompts the user → `ToolExecutor` runs it with timeout/cancellation → result is appended to context and the loop continues until the model finishes or `max_iterations` is hit. Every decision and result is written via `AuditWriter` with redaction applied first.
+`Repl` reads a line → `AgentLoop::run` builds context, calls the provider with the registry's tool specs → tool calls go through `Pipeline` (schema, policy, sensitive paths) → `Confirm` → `ConfirmationGate` → `ToolExecutor` runs with timeout/cancel → result feeds the next iteration until `Stop` or `max_iterations`. Every decision and result lands in the audit log via `AuditWriter` after redaction.
 
-### Testing patterns
+## Path-scoped rules
 
-Integration tests live in [crates/llmsh-core/tests/](crates/llmsh-core/tests/) and use [tests/common/mod.rs](crates/llmsh-core/tests/common/mod.rs), which provides `MockLlmProvider` (scripted responses) and `build_test_deps`. When adding agent-loop behavior, prefer an `e2e_*.rs` test that scripts provider responses end-to-end over a unit test of the loop internals — that's the established pattern and covers redaction, policy, repair, and cancellation.
+Conventions for specific areas live in [.claude/rules/](.claude/rules/) and load only when a matching file enters context:
 
-## Conventions
+- [audit-invariants.md](.claude/rules/audit-invariants.md) — touched when editing `llmsh-audit` or audit-emitting code in `llmsh-core`.
+- [policy-rules.md](.claude/rules/policy-rules.md) — touched when editing `llmsh-policy`, `pipeline.rs`, `confirm.rs`, `raw_shell.rs`.
+- [e2e-test-pattern.md](.claude/rules/e2e-test-pattern.md) — touched when editing files under `crates/llmsh-core/tests/`.
 
-- Workspace deps are pinned in the root [Cargo.toml](Cargo.toml) under `[workspace.dependencies]`; reference them in member crates with `dep.workspace = true` rather than re-pinning versions.
-- `reqwest` uses `rustls-tls` with `default-features = false` — don't reintroduce `native-tls`.
-- Audit events are the source of truth for "what happened"; if you add a new agent action, add a corresponding `AuditEvent` variant and emit it on every path (including error/cancel).
-- The MVP brief at [ai-docs/briefs/archived/LLMShell_CDC_MVP.md](ai-docs/briefs/archived/LLMShell_CDC_MVP.md) is the canonical spec for risk levels, redaction rules, and confirmation semantics — consult it before changing policy or audit behavior.
+## Reference
+
+- Workspace deps pinned in [Cargo.toml](Cargo.toml) under `[workspace.dependencies]`; reference with `dep.workspace = true`.
+- `reqwest` uses `rustls-tls` (`default-features = false`) — don't reintroduce `native-tls`.
+- MVP brief (canonical for risk levels, redaction rules, confirmation semantics): [ai-docs/briefs/archived/LLMShell_CDC_MVP.md](ai-docs/briefs/archived/LLMShell_CDC_MVP.md).
