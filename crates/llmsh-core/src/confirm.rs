@@ -90,12 +90,7 @@ pub(crate) fn summarize_call(call: &CheckedToolCall) -> Vec<String> {
                 .args
                 .get("args")
                 .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(Value::as_str)
-                        .map(quote_arg)
-                        .collect()
-                })
+                .map(|a| a.iter().filter_map(Value::as_str).map(quote_arg).collect())
                 .unwrap_or_default();
             let cmd = if args.is_empty() {
                 program.to_string()
