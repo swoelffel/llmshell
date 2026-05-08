@@ -1,5 +1,6 @@
 use crate::context::{ContextBuilder, SystemPromptSource};
 use crate::executor::ToolExecutor;
+use crate::memory::{ActionKind, Memory, RecentAction};
 use crate::pipeline::Pipeline;
 use crate::plan::ModelPlan;
 use llmsh_audit::digest::canonical_json_digest;
@@ -29,6 +30,7 @@ pub struct AgentDeps {
     pub sensitive_patterns: Vec<String>,
     pub model_label: String,
     pub system_prompt: Arc<dyn SystemPromptSource>,
+    pub memory: Arc<Memory>,
 }
 
 pub struct AgentLoop {
@@ -44,6 +46,16 @@ pub struct LoopResult {
 impl AgentLoop {
     pub async fn run(&mut self, user_input: &str) -> anyhow::Result<LoopResult> {
         let dep = self.deps.clone();
+
+        if let Err(e) = dep.memory.append_action(&RecentAction {
+            ts: now_iso(),
+            kind: ActionKind::UserInput,
+            summary: user_input.to_string(),
+            detail_json: None,
+        }) {
+            tracing::warn!("memory append_action(user_input) failed: {}", e);
+        }
+
         self.builder.append_user(user_input);
 
         let mut iter = 0u32;
@@ -119,6 +131,14 @@ impl AgentLoop {
                             ts: now_iso(),
                             text_redacted: red.clone(),
                         });
+                    if let Err(e) = dep.memory.append_action(&RecentAction {
+                        ts: now_iso(),
+                        kind: ActionKind::Assistant,
+                        summary: text.clone(),
+                        detail_json: None,
+                    }) {
+                        tracing::warn!("memory append_action(assistant) failed: {}", e);
+                    }
                     return Ok(LoopResult {
                         assistant_text: Some(text),
                         stopped_reason: "stop".into(),
@@ -315,6 +335,23 @@ impl AgentLoop {
                                 truncated,
                                 duration_ms: r.duration.as_millis() as u64,
                             });
+                    }
+                    for r in &results {
+                        let status = format!("{:?}", r.status).to_lowercase();
+                        let summary = format!("{}: {}", r.tool_name, status);
+                        let detail = serde_json::json!({
+                            "tool": r.tool_name,
+                            "status": status,
+                            "error": r.error,
+                        });
+                        if let Err(e) = dep.memory.append_action(&RecentAction {
+                            ts: now_iso(),
+                            kind: ActionKind::Tool,
+                            summary,
+                            detail_json: Some(detail.to_string()),
+                        }) {
+                            tracing::warn!("memory append_action(tool) failed: {}", e);
+                        }
                     }
                     self.builder.append_tool_results(&results);
                 }
