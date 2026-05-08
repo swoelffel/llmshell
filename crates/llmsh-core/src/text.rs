@@ -1,5 +1,4 @@
-/// Truncate `s` to at most `budget` bytes, walking back to a valid UTF-8
-/// char boundary if the budget falls in the middle of a multi-byte sequence.
+/// Truncates at a valid UTF-8 char boundary at or below `budget` bytes.
 pub fn truncate_to_byte_budget(s: &str, budget: usize) -> &str {
     if s.len() <= budget {
         return s;

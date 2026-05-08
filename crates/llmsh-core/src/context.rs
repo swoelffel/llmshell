@@ -12,8 +12,6 @@ Never assume actions succeeded until tool results confirm them. \
 The Runtime context and Recent activity sections below describe the current machine \
 state and the latest actions in this session — use them to ground your answers.";
 
-// The four Option<String> slots below are filled by later phases (B/C/D/E);
-// Phase A leaves them None.
 pub struct SystemPromptBuilder {
     persona: &'static str,
     pub agents_md: Option<String>,
@@ -68,10 +66,6 @@ impl Default for SystemPromptBuilder {
     }
 }
 
-// Phase A constructs the system prompt from a struct — later phases replace it
-// with a richer struct that also injects runtime_context and recent_activity.
-// Using a trait object keeps AgentDeps extensible without threading concrete
-// types through every callsite that only needs `current()`.
 pub trait SystemPromptSource: Send + Sync {
     fn current(&self) -> String;
 }

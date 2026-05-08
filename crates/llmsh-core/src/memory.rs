@@ -256,7 +256,10 @@ impl Memory {
         let mut rows: Vec<RecentAction> = stmt
             .query_map(params![n as i64], |row| {
                 let kind_str: String = row.get(1)?;
-                let kind = ActionKind::parse_kind(&kind_str).unwrap_or(ActionKind::UserInput);
+                let kind = ActionKind::parse_kind(&kind_str).unwrap_or_else(|| {
+                    tracing::warn!("unknown action kind in DB: {}", kind_str);
+                    ActionKind::UserInput
+                });
                 Ok(RecentAction {
                     ts: row.get(0)?,
                     kind,
