@@ -21,6 +21,7 @@ regex = { workspace = true }
 directories = { workspace = true }
 reedline = { workspace = true }
 rusqlite = { workspace = true }
+sysinfo = { workspace = true }
 llmsh-llm = { path = "../llmsh-llm" }
 llmsh-tools = { path = "../llmsh-tools" }
 llmsh-policy = { path = "../llmsh-policy" }

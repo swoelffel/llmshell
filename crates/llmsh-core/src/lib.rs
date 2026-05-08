@@ -11,4 +11,5 @@ pub mod pipeline;
 pub mod plan;
 pub mod raw_shell;
 pub mod repl;
+pub mod sysctx;
 pub mod text;
