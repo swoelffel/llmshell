@@ -28,7 +28,7 @@ pub struct AgentDeps {
     pub bounds: AgentBounds,
     pub policy_ctx: PolicyContext,
     pub sensitive_patterns: Vec<String>,
-    pub model_label: String,
+    pub model_label: std::sync::Arc<std::sync::RwLock<String>>,
     pub system_prompt: Arc<dyn SystemPromptSource>,
     pub memory: Arc<Memory>,
 }
@@ -83,9 +83,14 @@ impl AgentLoop {
                 tool_policy: ToolPolicyHint::PreferTools,
             };
             let messages_digest = canonical_json_digest(&serde_json::to_value(&req.messages)?);
+            let model_snap = dep
+                .model_label
+                .read()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| "unknown".into());
             let _ = dep.audit.lock().unwrap().write(&AuditEvent::LlmRequest {
                 ts: now_iso(),
-                model: dep.model_label.clone(),
+                model: model_snap.clone(),
                 messages_digest,
                 tool_count: req.tools.len(),
                 prompt_token_estimate: None,
@@ -109,7 +114,7 @@ impl AgentLoop {
                 .unwrap_or_default();
             let _ = dep.audit.lock().unwrap().write(&AuditEvent::LlmResponse {
                 ts: now_iso(),
-                model: dep.model_label.clone(),
+                model: model_snap.clone(),
                 finish_reason: format!("{:?}", resp.finish_reason).to_lowercase(),
                 message_redacted: resp.message.as_ref().map(|_| msg_red),
                 tool_call_count: resp.tool_calls.len(),

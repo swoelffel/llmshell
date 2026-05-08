@@ -6,7 +6,7 @@ use llmsh_llm::types::{FinishReason, LlmResponse, ToolCall};
 use llmsh_tools::read_file::ReadFile;
 use llmsh_tools::registry::ToolRegistry;
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 const FAKE_OPENAI_KEY: &str = "sk-AAAAAAAAAAAAAAAAAAAAAAAA";
 const FAKE_AWS_KEY: &str = "AKIAIOSFODNN7EXAMPLE";
@@ -110,7 +110,7 @@ async fn redaction_no_literal_secrets_in_audit() {
                 sensitive_path_patterns: vec![],
             },
             sensitive_patterns: vec![],
-            model_label: "mock:test".into(),
+            model_label: Arc::new(RwLock::new("mock:test".into())),
             system_prompt: Arc::new(StaticSystemPrompt::new(None)),
             memory: Arc::new(Memory::open_in_memory().unwrap()),
         })

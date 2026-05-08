@@ -12,7 +12,7 @@ use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine};
 use llmsh_tools::registry::ToolRegistry;
 use llmsh_tools::tool::{Tool, ToolCategory, ToolContext, ToolOutput};
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -102,7 +102,7 @@ async fn external_cancel_recorded_in_audit() {
             sensitive_path_patterns: vec![],
         },
         sensitive_patterns: vec![],
-        model_label: "mock:test".into(),
+        model_label: Arc::new(RwLock::new("mock:test".into())),
         system_prompt: Arc::new(StaticSystemPrompt::new(None)),
         memory: Arc::new(Memory::open_in_memory().unwrap()),
     });

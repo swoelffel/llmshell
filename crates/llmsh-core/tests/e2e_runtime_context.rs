@@ -7,7 +7,7 @@ use llmsh_core::memory::Memory;
 use llmsh_llm::types::{FinishReason, LlmResponse};
 use llmsh_policy::context::PolicyContext;
 use llmsh_tools::registry::ToolRegistry;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 fn single_stop_response() -> Vec<LlmResponse> {
@@ -23,7 +23,7 @@ fn single_stop_response() -> Vec<LlmResponse> {
 async fn system_prompt_contains_runtime_context_block() {
     let workspace = tempfile::tempdir().unwrap();
     let audit_dir = tempfile::tempdir().unwrap();
-    let model = Arc::new("mock:test-model".to_string());
+    let model = Arc::new(RwLock::new("mock:test-model".to_string()));
     let session_start = Instant::now();
 
     let canonical_ws =
@@ -84,7 +84,7 @@ async fn system_prompt_contains_runtime_context_block() {
             },
             policy_ctx,
             sensitive_patterns: vec![],
-            model_label: "mock:test-model".into(),
+            model_label: Arc::new(RwLock::new("mock:test-model".into())),
             system_prompt,
             memory,
         });

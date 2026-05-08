@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 pub struct RuntimeContext {
@@ -17,7 +17,11 @@ pub struct RuntimeContext {
 }
 
 impl RuntimeContext {
-    pub fn capture(workspace_root: PathBuf, model: Arc<String>, session_start: Instant) -> Self {
+    pub fn capture(
+        workspace_root: PathBuf,
+        model: Arc<RwLock<String>>,
+        session_start: Instant,
+    ) -> Self {
         let host = sysinfo::System::host_name().unwrap_or_else(|| "unknown".into());
         let os_name = sysinfo::System::name().unwrap_or_else(|| "unknown".into());
         let os_version = sysinfo::System::os_version().unwrap_or_else(|| "unknown".into());
@@ -39,7 +43,10 @@ impl RuntimeContext {
             user,
             cwd,
             workspace_root,
-            model: model.as_ref().clone(),
+            model: model
+                .read()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| "unknown".into()),
             disk_free_bytes,
             disk_total_bytes,
             session_uptime: session_start.elapsed(),
@@ -273,7 +280,7 @@ mod tests {
 
         let ctx = RuntimeContext::capture(
             link.clone(),
-            Arc::new("mock:test".to_string()),
+            Arc::new(RwLock::new("mock:test".to_string())),
             Instant::now(),
         );
 

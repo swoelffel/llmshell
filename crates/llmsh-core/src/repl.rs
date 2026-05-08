@@ -2,10 +2,12 @@ use crate::agent::{AgentDeps, AgentLoop};
 use crate::context::ContextBuilder;
 use crate::init::MachineAudit;
 use crate::input::{classify, InputKind};
+use crate::model_cmd::{handle_model_command, ModelCommandContext, ModelListCache};
 use crate::raw_shell::{resolve_shell, RiskScan};
 use llmsh_audit::event::{now_iso, AuditEvent};
 use reedline::{DefaultPrompt, Reedline, Signal};
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::process::Command;
@@ -25,6 +27,8 @@ pub struct Repl {
     pub raw_shell: Option<String>,
     pub risk_scan: RiskScan,
     pub root_cancel: CancellationToken,
+    pub config_path: Option<PathBuf>,
+    pub model_cache: ModelListCache,
 }
 
 impl Repl {
@@ -96,7 +100,7 @@ impl Repl {
     async fn handle_meta(&mut self, cmd: &str, args: &[String]) -> anyhow::Result<()> {
         match cmd {
             "help" => {
-                println!("/help /exit /pwd /cd <path> /history /model /init");
+                println!("/help /exit /pwd /cd <path> /history /model [list|set <id>] /init");
             }
             "init" => {
                 let audit = MachineAudit::capture_with_tooling().await;
@@ -151,7 +155,18 @@ impl Repl {
                     println!("{}", h);
                 }
             }
-            "model" => println!("{}", self.deps.model_label),
+            "model" => {
+                let ctx = ModelCommandContext {
+                    provider: self.deps.provider.as_ref(),
+                    model_label: &self.deps.model_label,
+                    cache: &self.model_cache,
+                    config_path: self.config_path.as_deref(),
+                    audit: &self.deps.audit,
+                };
+                if let Err(e) = handle_model_command(&ctx, args).await {
+                    eprintln!("model command error: {}", e);
+                }
+            }
             other => eprintln!("unknown meta command: /{}", other),
         }
         Ok(())
@@ -181,7 +196,6 @@ impl Repl {
             .kill_on_drop(true);
         let cancel = self.root_cancel.clone();
         let child = cmd.spawn()?;
-        // Collect into output in a cancellable way; spawn a task then await it.
         let mut output_task = tokio::spawn(child.wait_with_output());
         let output = tokio::select! {
             _ = cancel.cancelled() => {

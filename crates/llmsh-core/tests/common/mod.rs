@@ -12,7 +12,7 @@ use llmsh_llm::types::{LlmRequest, LlmResponse};
 use llmsh_policy::context::PolicyContext;
 use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine};
 use llmsh_tools::registry::ToolRegistry;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -128,7 +128,7 @@ pub fn build_test_deps_with_memory(
         agents_md,
         memory.clone(),
         std::env::temp_dir(),
-        Arc::new("mock:test-model".to_string()),
+        Arc::new(RwLock::new("mock:test-model".to_string())),
         Instant::now(),
     ));
     let deps = Arc::new(AgentDeps {
@@ -151,7 +151,7 @@ pub fn build_test_deps_with_memory(
         },
         policy_ctx,
         sensitive_patterns,
-        model_label: "mock:test".into(),
+        model_label: Arc::new(RwLock::new("mock:test".into())),
         system_prompt,
         memory,
     });

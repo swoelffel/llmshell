@@ -4,7 +4,7 @@ use crate::memory::{ActionKind, Memory};
 use crate::sysctx::RuntimeContext;
 use llmsh_llm::types::{Message, MessageRole};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 pub const DEFAULT_PERSONA: &str = "\
@@ -97,7 +97,7 @@ pub struct MemorySystemPrompt {
     agents_md: Option<String>,
     memory: Arc<Memory>,
     workspace_root: PathBuf,
-    model: Arc<String>,
+    model: Arc<RwLock<String>>,
     session_start: Instant,
 }
 
@@ -106,7 +106,7 @@ impl MemorySystemPrompt {
         agents_md: Option<String>,
         memory: Arc<Memory>,
         workspace_root: PathBuf,
-        model: Arc<String>,
+        model: Arc<RwLock<String>>,
         session_start: Instant,
     ) -> Self {
         let workspace_root = std::fs::canonicalize(&workspace_root).unwrap_or(workspace_root);
@@ -342,7 +342,7 @@ mod tests {
             None,
             memory,
             std::path::PathBuf::from("/tmp"),
-            Arc::new("mock:test".to_string()),
+            Arc::new(RwLock::new("mock:test".to_string())),
             std::time::Instant::now(),
         )
     }

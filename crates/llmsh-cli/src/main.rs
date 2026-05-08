@@ -13,6 +13,7 @@ use llmsh_core::context::MemorySystemPrompt;
 use llmsh_core::executor::ToolExecutor;
 use llmsh_core::init::run_autoinit_if_needed;
 use llmsh_core::memory::Memory;
+use llmsh_core::model_cmd::ModelListCache;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
 use llmsh_core::repl::{Repl, ReplState};
@@ -26,7 +27,9 @@ use llmsh_tools::read_file::ReadFile;
 use llmsh_tools::registry::ToolRegistry;
 use llmsh_tools::run_process::RunProcess;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+
+type ProviderWithModel = (Arc<dyn LlmProvider>, Arc<RwLock<String>>);
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser, Debug)]
@@ -96,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
     })?;
 
     // 3. Provider
-    let provider = build_provider(&cfg)?;
+    let (provider, shared_model) = build_provider(&cfg)?;
 
     // 4. Tools
     let mut registry = ToolRegistry::new();
@@ -159,12 +162,11 @@ async fn main() -> anyhow::Result<()> {
 
     // 7. Agent deps
     let agents_md = load_agents_md();
-    let model = Arc::new(cfg.default_model.clone());
     let system_prompt = Arc::new(MemorySystemPrompt::new(
         agents_md,
         memory.clone(),
         workspace_root.clone(),
-        model,
+        shared_model.clone(),
         session_start,
     ));
     let deps = Arc::new(AgentDeps {
@@ -181,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
         },
         policy_ctx,
         sensitive_patterns: cfg.policy.sensitive_paths.patterns.clone(),
-        model_label: cfg.default_model.clone(),
+        model_label: shared_model.clone(),
         system_prompt,
         memory,
     });
@@ -198,12 +200,14 @@ async fn main() -> anyhow::Result<()> {
         raw_shell: cfg.shell.raw_shell.clone(),
         risk_scan: RiskScan::default(),
         root_cancel: cancel,
+        config_path: Some(cfg_path),
+        model_cache: ModelListCache::new(),
     };
     repl.run().await?;
     Ok(())
 }
 
-fn build_provider(cfg: &Config) -> anyhow::Result<Arc<dyn LlmProvider>> {
+fn build_provider(cfg: &Config) -> anyhow::Result<ProviderWithModel> {
     let (provider_name, model) = cfg
         .default_model
         .split_once(':')
@@ -220,7 +224,8 @@ fn build_provider(cfg: &Config) -> anyhow::Result<Arc<dyn LlmProvider>> {
         model: model.into(),
         timeout_ms: 60_000,
     })?;
-    Ok(Arc::new(p))
+    let shared = p.shared_model();
+    Ok((Arc::new(p), shared))
 }
 
 fn policy_config_from(cfg: &Config) -> DefaultPolicyConfig {
