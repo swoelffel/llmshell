@@ -52,6 +52,7 @@ Most AI terminal tools focus on generating commands. LLMShell focuses on **contr
 - **Policy gate before every action** — each tool call is classified into `Allow` / `Confirm` / `ConfirmStrong` / `Deny` before it runs.
 - **Sensitive path detection** — paths like `~/.ssh/`, credentials files, and well-known system locations require **strong confirmation** (typing a generated phrase) by default. Users can map them to `Deny` in `config.toml`.
 - **Confirmation prompts on risky operations** — destructive or ambiguous calls surface tool args + policy flags before execution.
+- **Smart confirmation prompts** — read-only `run_process` invocations (`crontab -l`, `git status`, `ls`, …) are auto-classified and pass without prompting. The model also declares an `intent` and a `claimed_risk` for every `run_process` call, both surfaced in the confirmation prompt and audit log. The model can only RAISE risk above the deterministic verdict, never lower it.
 - **Redacted, append-only audit log** — every step is recorded as hash-chained JSONL with secrets stripped at the LLM boundary.
 - **Explicit raw shell escape via `!`** — when you really need raw shell, prefix with `!`. It still goes through the audit log.
 
