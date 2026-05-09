@@ -6,13 +6,36 @@ LLMShell is pre-1.0 and shipped as experimental software. The roadmap below sket
 
 Goal: drop the time-to-first-session below two minutes.
 
-- Pre-built release binaries for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`.
-- `SHA256SUMS` published with each release.
-- `install.sh` script (`curl -fsSL … | sh`) that detects OS/arch, downloads the matching binary, verifies the checksum, installs to `~/.local/bin`.
-- Homebrew tap: `brew install swoelffel/tap/llmshell`.
+### Foundation
+
+- `.github/workflows/release.yml` triggered on `v*` tags — cross-compiles four targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`.
+- Each release attaches `llmsh-<target>.tar.gz` archives plus a `SHA256SUMS` file.
 - `cargo install --git` documented as the official source path until crates.io publication.
-- README demo (asciinema or GIF) above the fold.
+
+### Distribution channels
+
+Tiered by reach-per-effort. Foundation above is a prerequisite for every channel except cargo.
+
+- **`install.sh`** (`curl -fsSL https://… | sh`) — universal Linux/macOS path. Detects OS+arch, downloads the matching archive from GitHub Releases, verifies SHA256, installs to `~/.local/bin` (or `/usr/local/bin` with sudo). Single-file Bash; covers ~90 % of the Linux need.
+- **Homebrew tap** (`swoelffel/homebrew-tap`) — `brew install swoelffel/tap/llmshell`. One Ruby formula with `on_macos` + `on_linux` blocks covers macOS *and* Linuxbrew users in one shot. Auto-bumped from `release.yml` via [Justintime50/homebrew-releaser](https://github.com/Justintime50/homebrew-releaser) or a small `sed` step.
+- **AUR `llmsh-bin`** — `yay -S llmsh-bin`. A `PKGBUILD` pointing at the GitHub Release archives. Low effort, strong reach in the Arch / Manjaro / dev-tools community.
+
+### Deferred to v0.4+ (only if adoption warrants the maintenance cost)
+
+- `.deb` repo (Debian / Ubuntu / Mint) — built via `cargo-deb`, distributed through Cloudsmith or a self-hosted APT repo with GPG signing.
+- `.rpm` repo (Fedora / RHEL / openSUSE) — built via `cargo-generate-rpm`, distributed through Copr or OBS.
+- Nix flake — fits the safety-first positioning (deterministic, sandbox-friendly).
+- GHCR container image (`ghcr.io/swoelffel/llmsh`) — useful for CI / voluntary sandboxing, less natural for an interactive shell.
+- `asdf` / `mise` plugin — small wrapper around the GitHub Releases for polyglot devs.
+- crates.io publication of `llmsh-cli` (and possibly the supporting crates).
+
+Snap and Flatpak are **not** on the roadmap: their confinement model interacts badly with `run_process` and arbitrary-path tools, which would push us to "classic" / unconfined modes that defeat the point.
+
+### Documentation & demo
+
+- README demo asset (asciinema cast or short GIF) above the fold.
 - `docs/safety.md` finalised and linked from the safety section.
+- Release notes oriented for end users, not commit-by-commit.
 
 ## v0.4 — Local-first provider
 

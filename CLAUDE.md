@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Superpowers output paths (override)
+
+The superpowers plugin defaults to writing under `docs/superpowers/`. In this repo, **redirect every superpowers artefact to `ai-docs/superpowers/`** — `docs/` is part of the public-facing project documentation and must not be polluted by per-iteration plans/specs. `ai-docs/` is gitignored and dedicated to drafts.
+
+| Skill | Default path | Use here instead |
+|---|---|---|
+| `superpowers:writing-plans` | `docs/superpowers/plans/YYYY-MM-DD-*.md` | `ai-docs/superpowers/plans/YYYY-MM-DD-*.md` |
+| `superpowers:brainstorming` (design docs) | `docs/superpowers/specs/YYYY-MM-DD-*-design.md` | `ai-docs/superpowers/specs/YYYY-MM-DD-*-design.md` |
+
+This override takes precedence over the skill's own instructions, per the using-superpowers contract ("user instructions always take precedence").
+
 ## Project
 
 LLMShell (`llmsh`) — an agentic terminal shell. A REPL takes natural-language input, an LLM agent plans and emits tool calls, a policy engine classifies risk and gates execution, tools run with timeout/cancellation, and every step is appended to a tamper-evident audit log.
