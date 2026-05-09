@@ -208,7 +208,10 @@ mod classifier_tests {
     fn ls_downgraded_to_read_only_when_enabled() {
         let p = make_pipeline(true);
         let out = p.check(
-            model_plan(serde_json::json!({"program":"ls","args":["-la"]})),
+            model_plan(serde_json::json!({
+                "program":"ls","args":["-la"],
+                "intent":"list","claimed_risk":"read_only"
+            })),
             &ctx(),
             &[],
         );
@@ -221,7 +224,14 @@ mod classifier_tests {
     #[test]
     fn ls_stays_unknown_when_disabled() {
         let p = make_pipeline(false);
-        let out = p.check(model_plan(serde_json::json!({"program":"ls"})), &ctx(), &[]);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"ls",
+                "intent":"list","claimed_risk":"read_only"
+            })),
+            &ctx(),
+            &[],
+        );
         assert_eq!(out.plan.steps[0].call.declared_risk, RiskLevel::Unknown);
     }
 
@@ -229,7 +239,10 @@ mod classifier_tests {
     fn rm_stays_unknown() {
         let p = make_pipeline(true);
         let out = p.check(
-            model_plan(serde_json::json!({"program":"rm","args":["-rf","/tmp/x"]})),
+            model_plan(serde_json::json!({
+                "program":"rm","args":["-rf","/tmp/x"],
+                "intent":"clean","claimed_risk":"unknown"
+            })),
             &ctx(),
             &[],
         );

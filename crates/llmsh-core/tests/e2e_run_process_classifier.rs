@@ -93,7 +93,10 @@ async fn auto_classify_skips_confirmation_for_ls() {
             tool_calls: vec![ToolCall {
                 id: "c1".into(),
                 name: "run_process".into(),
-                args: json!({"program":"ls","args":["-la","/tmp"]}),
+                args: json!({
+                    "program":"ls","args":["-la","/tmp"],
+                    "intent":"list /tmp","claimed_risk":"read_only"
+                }),
             }],
             finish_reason: FinishReason::ToolCalls,
             usage: None,
@@ -133,7 +136,10 @@ async fn auto_classify_disabled_falls_back_to_confirmation() {
         tool_calls: vec![ToolCall {
             id: "c1".into(),
             name: "run_process".into(),
-            args: json!({"program":"ls"}),
+            args: json!({
+                "program":"ls",
+                "intent":"list","claimed_risk":"read_only"
+            }),
         }],
         finish_reason: FinishReason::ToolCalls,
         usage: None,
@@ -157,7 +163,10 @@ async fn rm_still_requires_confirmation() {
         tool_calls: vec![ToolCall {
             id: "c1".into(),
             name: "run_process".into(),
-            args: json!({"program":"rm","args":["-rf","/tmp/x"]}),
+            args: json!({
+                "program":"rm","args":["-rf","/tmp/x"],
+                "intent":"clean","claimed_risk":"destructive"
+            }),
         }],
         finish_reason: FinishReason::ToolCalls,
         usage: None,

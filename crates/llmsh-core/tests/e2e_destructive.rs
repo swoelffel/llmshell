@@ -25,7 +25,10 @@ async fn destructive_rm_rf_cancelled_by_gate() {
         tool_calls: vec![ToolCall {
             id: "c1".into(),
             name: "run_process".into(),
-            args: json!({"program": "rm", "args": ["-rf", "./tmp-test"]}),
+            args: json!({
+                "program": "rm", "args": ["-rf", "./tmp-test"],
+                "intent": "remove temp dir", "claimed_risk": "destructive"
+            }),
         }],
         finish_reason: FinishReason::ToolCalls,
         usage: None,
