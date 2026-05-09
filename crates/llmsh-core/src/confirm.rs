@@ -150,6 +150,8 @@ fn flag_label(f: &PolicyFlag) -> &'static str {
         PolicyFlag::UsesShell => "uses_shell",
         PolicyFlag::UsesPrivilegeEscalation => "privilege_escalation",
         PolicyFlag::KnownReadOnlyCommand => "known_read_only_command",
+        PolicyFlag::ModelClaimedRisk => "model_claimed_risk",
+        PolicyFlag::ModelDisagreesOnRisk => "model_disagrees_on_risk",
     }
 }
 

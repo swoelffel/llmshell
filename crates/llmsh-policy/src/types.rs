@@ -24,6 +24,13 @@ pub enum PolicyFlag {
     /// Set by the pipeline when the deterministic classifier matched a
     /// read-only `run_process` invocation. Audit-visible.
     KnownReadOnlyCommand,
+    /// LLM declared a `claimed_risk` higher than the classifier's verdict.
+    /// The higher value was taken; this flag records that the model contributed.
+    ModelClaimedRisk,
+    /// LLM declared a `claimed_risk` lower than the classifier's verdict.
+    /// The classifier value was kept; this flag records the disagreement
+    /// for offline review.
+    ModelDisagreesOnRisk,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
