@@ -66,50 +66,6 @@ impl ClearSource {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Deprecated legacy stubs — removed in task 7
-// ---------------------------------------------------------------------------
-
-#[allow(deprecated)]
-#[deprecated(note = "removed in task 7; use ConversationMessage instead")]
-pub struct RecentAction {
-    pub ts: String,
-    pub kind: ActionKind,
-    pub summary: String,
-    pub detail_json: Option<String>,
-}
-
-#[allow(deprecated)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[deprecated(note = "removed in task 7; use ClearSource / ConversationMessage instead")]
-pub enum ActionKind {
-    UserInput,
-    Assistant,
-    Tool,
-}
-
-#[allow(deprecated)]
-impl ActionKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ActionKind::UserInput => "user_input",
-            ActionKind::Assistant => "assistant",
-            ActionKind::Tool => "tool",
-        }
-    }
-
-    pub fn parse_kind(s: &str) -> Option<ActionKind> {
-        match s {
-            "user_input" => Some(ActionKind::UserInput),
-            "assistant" => Some(ActionKind::Assistant),
-            "tool" => Some(ActionKind::Tool),
-            _ => None,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-
 impl Memory {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let is_new = !path.exists();
@@ -297,22 +253,6 @@ impl Memory {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e).context("read_init_audit"),
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Deprecated legacy stubs — TODO task 7: remove these
-    // -----------------------------------------------------------------------
-
-    #[deprecated(note = "no-op stub; removed in task 7")]
-    #[allow(deprecated)]
-    pub fn append_action(&self, _action: &RecentAction) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    #[deprecated(note = "no-op stub; removed in task 7")]
-    #[allow(deprecated)]
-    pub fn last_actions(&self, _n: usize) -> anyhow::Result<Vec<RecentAction>> {
-        Ok(vec![])
     }
 
     // -----------------------------------------------------------------------
