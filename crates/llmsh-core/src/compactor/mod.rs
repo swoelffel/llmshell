@@ -54,7 +54,8 @@ pub fn total_content_bytes(messages: &[Message]) -> usize {
     messages.iter().map(|m| m.content.len()).sum()
 }
 
-use crate::config::CompactConfig;
+use crate::config::{CompactConfig, MemoryConfig};
+use crate::memory::{ClearSource, ConversationMessage, Memory};
 use llmsh_llm::context_window::context_window_for;
 use llmsh_llm::provider::LlmProvider;
 use std::sync::Arc;
@@ -64,13 +65,16 @@ use std::sync::Arc;
 /// `last_input_tokens` is the prompt_tokens of the most recent provider
 /// response — used to decide whether to trigger stage B for the auto path.
 /// For the manual path, pass `u32::MAX` to force stage B.
+#[allow(clippy::too_many_arguments)]
 pub async fn compact(
     messages: &mut Vec<llmsh_llm::types::Message>,
     cfg: &CompactConfig,
+    memory_cfg: &MemoryConfig,
     reason: CompactionReason,
     model: &str,
     last_input_tokens: u32,
     provider: Arc<dyn LlmProvider>,
+    memory: Arc<Memory>,
 ) -> CompactionReport {
     let messages_before = messages.len();
     let bytes_before = total_content_bytes(messages);
@@ -93,7 +97,15 @@ pub async fn compact(
     if should_summarize {
         if let Some(cut) = summarize::find_cut_index(messages, cfg.keep_last_user_turns) {
             let prefix: Vec<_> = messages[..cut].to_vec();
-            match summarize::summarize_prefix(
+
+            let current_facts: Vec<(String, String)> = memory
+                .load_active_facts()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|f| (f.category, f.claim))
+                .collect();
+
+            match summarize::summarize_and_extract(
                 provider,
                 if cfg.model.is_empty() {
                     None
@@ -101,20 +113,83 @@ pub async fn compact(
                     Some(cfg.model.as_str())
                 },
                 &prefix,
+                &current_facts,
                 cfg.summary_max_tokens,
+                memory_cfg.max_facts,
             )
             .await
             {
-                Ok((summary_msg, d)) => {
-                    let tail: Vec<_> = messages.drain(cut..).collect();
+                Ok((summary_msg, facts, d)) => {
+                    let ts =
+                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+                    // ──────────────────────────────────────────────────────
+                    // SQLite/RAM compaction dance:
+                    //   1. Mark all active conversation_messages cleared
+                    //      (cleared_source='compact').
+                    //   2. INSERT the summary message (insert_source='compact').
+                    //   3. Re-INSERT each tail message (insert_source='compact_tail')
+                    //      so load_active_conversation() returns [summary, ...tail].
+                    //   4. replace_facts_generation with new curated facts.
+                    // The audit log retains everything (cleared rows are still rows).
+                    // ──────────────────────────────────────────────────────
+
+                    let _ = memory.mark_conversation_cleared(&ts, ClearSource::Compact);
+
+                    let _ = memory.append_message(&ConversationMessage {
+                        id: 0,
+                        ts: ts.clone(),
+                        role: "assistant".into(),
+                        content: summary_msg.content.clone(),
+                        tool_call_id: None,
+                        name: None,
+                        tool_calls_json: None,
+                        insert_source: "compact".into(),
+                    });
+
+                    let tail = messages[cut..].to_vec();
+                    for m in &tail {
+                        let role = match m.role {
+                            llmsh_llm::types::MessageRole::User => "user",
+                            llmsh_llm::types::MessageRole::Assistant => "assistant",
+                            llmsh_llm::types::MessageRole::Tool => "tool",
+                            llmsh_llm::types::MessageRole::System => "system",
+                        };
+                        let tcs = m
+                            .tool_calls
+                            .as_ref()
+                            .and_then(|tcs| serde_json::to_string(tcs).ok());
+                        let _ = memory.append_message(&ConversationMessage {
+                            id: 0,
+                            ts: ts.clone(),
+                            role: role.into(),
+                            content: m.content.clone(),
+                            tool_call_id: m.tool_call_id.clone(),
+                            name: m.name.clone(),
+                            tool_calls_json: tcs,
+                            insert_source: "compact_tail".into(),
+                        });
+                    }
+
+                    let new_facts: Vec<(String, String)> = facts
+                        .iter()
+                        .map(|f| (f.category.clone(), f.claim.clone()))
+                        .collect();
+                    let _ = memory.replace_facts_generation(&ts, &new_facts);
+
+                    // RAM update.
                     messages.clear();
                     messages.push(summary_msg);
                     messages.extend(tail);
+
                     summarized = true;
                     digest = Some(d);
                 }
                 Err(e) => {
-                    tracing::warn!("compaction summarize failed (silent fallback): {}", e);
+                    tracing::warn!(
+                        "compaction summarize+extract failed (silent fallback): {}",
+                        e
+                    );
                 }
             }
         }

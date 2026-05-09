@@ -213,10 +213,12 @@ impl Repl {
                 let report = crate::compactor::compact(
                     &mut self.builder.messages,
                     &self.deps.compact_config,
+                    &self.deps.memory_cfg,
                     crate::compactor::CompactionReason::Manual,
                     &model_now,
                     last_input.max(u32::MAX / 2),
                     self.deps.provider.clone(),
+                    self.deps.memory.clone(),
                 )
                 .await;
                 println!(

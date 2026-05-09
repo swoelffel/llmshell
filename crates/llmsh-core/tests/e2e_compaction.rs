@@ -139,9 +139,9 @@ async fn auto_compaction_triggers_when_threshold_crossed() {
         responses: Mutex::new(vec![
             stop("ans1", 1_000),
             stop("ans2", 100_000),
-            stop("résumé condensé", 50),
+            stop(r#"{"summary":"résumé condensé","facts":[]}"#, 50),
             stop("ans3", 50_000),
-            stop("résumé2", 50),
+            stop(r#"{"summary":"résumé2","facts":[]}"#, 50),
             stop("ans4", 30_000),
         ]),
         model: model.clone(),
@@ -208,10 +208,12 @@ async fn manual_compact_runs_truncate_only_on_short_convo() {
     let report = llmsh_core::compactor::compact(
         &mut builder.messages,
         &compact_config,
+        &llmsh_core::config::MemoryConfig::default(),
         llmsh_core::compactor::CompactionReason::Manual,
         "openai:gpt-4o-mini",
         u32::MAX / 2,
         deps.provider.clone(),
+        deps.memory.clone(),
     )
     .await;
     assert_eq!(

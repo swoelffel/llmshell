@@ -1,7 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use llmsh_audit::digest::sha256_hex;
 use llmsh_llm::provider::LlmProvider;
-use llmsh_llm::types::{LlmRequest, Message, MessageRole, ToolPolicyHint};
+use llmsh_llm::types::{LlmRequest, Message, MessageRole, ResponseFormat, ToolPolicyHint};
+use serde::Deserialize;
 use std::sync::Arc;
 
 /// Returns the index just before the `keep_last_user_turns`-th user message
@@ -31,34 +32,45 @@ pub fn find_cut_index(messages: &[Message], keep_last_user_turns: usize) -> Opti
     None
 }
 
-const SUMMARIZE_PROMPT_HEADER: &str = "\
-Tu résumes une conversation entre un utilisateur et un agent shell pour la conserver dans le contexte. \
-Produis un résumé factuel et concis qui préserve : \
-- les décisions et leur justification \
-- les actions exécutées (commandes, fichiers lus/écrits) et leurs résultats clés \
-- les questions ouvertes ou TODOs explicites. \
-Drop la politesse, les redites, les détails non actionnables.";
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExtractedFact {
+    pub category: String,
+    pub claim: String,
+}
 
-/// Produce a single `assistant` content-only message that summarizes the
-/// given prefix. Returns the new message + the sha256 digest of its content.
-/// Fails (Err) if the LLM call fails — caller decides how to handle (typically
-/// fallback silent: keep prefix as-is).
-pub async fn summarize_prefix(
+#[derive(Debug, Deserialize)]
+struct CompactJson {
+    summary: String,
+    #[serde(default)]
+    facts: Vec<ExtractedFact>,
+}
+
+const SUMMARIZE_AND_EXTRACT_SYSTEM: &str = "\
+Tu es un agent qui produit (1) un résumé de conversation et (2) une liste \
+curée de faits long-terme à mémoriser. Réponds en JSON strict avec les clés \
+\"summary\" et \"facts\".";
+
+/// Run the LLM call to produce both a summary message and the new curated
+/// facts list. Returns `(summary_message, facts, digest)`.
+///
+/// Fails (Err) if the LLM call fails or returns unparseable JSON — caller
+/// decides how to handle (typically silent fallback: keep prefix as-is).
+pub async fn summarize_and_extract(
     provider: Arc<dyn LlmProvider>,
     summary_model_label: Option<&str>,
     prefix: &[Message],
+    current_facts: &[(String, String)], // (category, claim)
     summary_max_tokens: u32,
-) -> Result<(Message, String)> {
-    let body = render_prefix_for_summary(prefix);
+    max_facts: usize,
+) -> Result<(Message, Vec<ExtractedFact>, String)> {
+    let prefix_body = render_prefix_for_summary(prefix);
+    let facts_body = render_current_facts(current_facts);
     let user_msg = format!(
-        "{} Limite : ~{} tokens.\n\n=== conversation ===\n{}",
-        SUMMARIZE_PROMPT_HEADER, summary_max_tokens, body
+        "Voici les faits long-terme actuellement mémorisés (à fusionner, mettre à jour, supprimer si stale, garder max {max_facts} entrées) :\n\n{facts_body}\n\nVoici la conversation à résumer :\n\n{prefix_body}\n\nProduis un JSON strict avec :\n- \"summary\" : résumé factuel max {summary_max_tokens} tokens. Préserve décisions, actions exécutées, TODOs ouverts.\n- \"facts\" : liste finale curée, max {max_facts} entrées, chaque entrée avec \"category\" (identity|preference|project|todo|other) et \"claim\" (phrase courte)."
     );
+
     let req = LlmRequest {
-        system: Some(
-            "Tu es un assistant qui produit des résumés de conversation pour gérer un budget de contexte LLM."
-                .to_string(),
-        ),
+        system: Some(SUMMARIZE_AND_EXTRACT_SYSTEM.into()),
         messages: vec![Message {
             role: MessageRole::User,
             content: user_msg,
@@ -68,29 +80,36 @@ pub async fn summarize_prefix(
         }],
         tools: vec![],
         tool_policy: ToolPolicyHint::None,
+        response_format: Some(ResponseFormat::JsonObject),
     };
     let _ = summary_model_label; // reserved: future hook to swap provider/model
-    let resp = provider.complete(req).await?;
-    let content = resp.message.unwrap_or_default();
+    let resp = provider
+        .complete(req)
+        .await
+        .context("compaction LLM call")?;
+    let raw = resp.message.unwrap_or_default();
+    let parsed: CompactJson = serde_json::from_str(&raw)
+        .with_context(|| format!("compaction JSON parse failed; got: {raw}"))?;
+
+    let facts: Vec<ExtractedFact> = parsed.facts.into_iter().take(max_facts).collect();
+
     let prefixed = format!(
         "=== compacted ({} messages summarized) ===\n{}",
         prefix.len(),
-        content.trim()
+        parsed.summary.trim()
     );
     let digest = sha256_hex(prefixed.as_bytes());
-    Ok((
-        Message {
-            role: MessageRole::Assistant,
-            content: prefixed,
-            tool_call_id: None,
-            name: None,
-            tool_calls: None,
-        },
-        digest,
-    ))
+    let summary_msg = Message {
+        role: MessageRole::Assistant,
+        content: prefixed,
+        tool_call_id: None,
+        name: None,
+        tool_calls: None,
+    };
+    Ok((summary_msg, facts, digest))
 }
 
-fn render_prefix_for_summary(prefix: &[Message]) -> String {
+pub fn render_prefix_for_summary(prefix: &[Message]) -> String {
     let mut out = String::new();
     for m in prefix {
         match m.role {
@@ -130,6 +149,17 @@ fn render_prefix_for_summary(prefix: &[Message]) -> String {
         }
     }
     out
+}
+
+fn render_current_facts(facts: &[(String, String)]) -> String {
+    if facts.is_empty() {
+        return "(aucun fait mémorisé)".into();
+    }
+    facts
+        .iter()
+        .map(|(c, claim)| format!("- [{c}] {claim}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -237,17 +267,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn summarize_prefix_yields_assistant_content_only() {
+    async fn summarize_and_extract_yields_summary_and_facts() {
         let provider: StdArc<dyn LlmProvider> = StdArc::new(ScriptedProvider {
             responses: Mutex::new(vec![LlmResponse {
-                message: Some("résumé court".into()),
+                message: Some(
+                    r#"{"summary":"résumé court","facts":[{"category":"identity","claim":"alice"}]}"#
+                        .into(),
+                ),
                 tool_calls: vec![],
                 finish_reason: FinishReason::Stop,
                 usage: Some(TokenUsage::default()),
             }]),
         });
         let prefix = vec![user("hello"), assistant("hi")];
-        let (msg, digest) = summarize_prefix(provider, None, &prefix, 500)
+        let (msg, facts, digest) = summarize_and_extract(provider, None, &prefix, &[], 500, 10)
             .await
             .unwrap();
         assert_eq!(msg.role, MessageRole::Assistant);
@@ -258,10 +291,13 @@ mod tests {
             .starts_with("=== compacted (2 messages summarized) ==="));
         assert!(msg.content.contains("résumé court"));
         assert_eq!(digest.len(), 64);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].category, "identity");
+        assert_eq!(facts[0].claim, "alice");
     }
 
     #[tokio::test]
-    async fn summarize_provider_failure_propagates() {
+    async fn summarize_and_extract_provider_failure_propagates() {
         struct Boom;
         #[async_trait]
         impl LlmProvider for Boom {
@@ -290,6 +326,50 @@ mod tests {
         }
         let p: StdArc<dyn LlmProvider> = StdArc::new(Boom);
         let prefix = vec![user("hi"), assistant("ho")];
-        assert!(summarize_prefix(p, None, &prefix, 500).await.is_err());
+        assert!(summarize_and_extract(p, None, &prefix, &[], 500, 10)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn extract_caps_at_max_facts() {
+        let provider: StdArc<dyn LlmProvider> = StdArc::new(ScriptedProvider {
+            responses: Mutex::new(vec![LlmResponse {
+                message: Some(
+                    r#"{"summary":"s","facts":[
+                        {"category":"identity","claim":"c1"},
+                        {"category":"identity","claim":"c2"},
+                        {"category":"identity","claim":"c3"},
+                        {"category":"identity","claim":"c4"},
+                        {"category":"identity","claim":"c5"}
+                    ]}"#
+                    .into(),
+                ),
+                tool_calls: vec![],
+                finish_reason: FinishReason::Stop,
+                usage: None,
+            }]),
+        });
+        let prefix = vec![user("q"), assistant("a")];
+        let (_msg, facts, _digest) = summarize_and_extract(provider, None, &prefix, &[], 200, 2)
+            .await
+            .unwrap();
+        assert_eq!(facts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn invalid_json_returns_err() {
+        let provider: StdArc<dyn LlmProvider> = StdArc::new(ScriptedProvider {
+            responses: Mutex::new(vec![LlmResponse {
+                message: Some("not valid json at all".into()),
+                tool_calls: vec![],
+                finish_reason: FinishReason::Stop,
+                usage: None,
+            }]),
+        });
+        let prefix = vec![user("q"), assistant("a")];
+        assert!(summarize_and_extract(provider, None, &prefix, &[], 200, 10)
+            .await
+            .is_err());
     }
 }

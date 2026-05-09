@@ -132,10 +132,12 @@ impl AgentLoop {
                     let report = compactor::compact(
                         &mut self.builder.messages,
                         &dep.compact_config,
+                        &dep.memory_cfg,
                         compactor::CompactionReason::Auto,
                         &model_now,
                         last_input,
                         dep.provider.clone(),
+                        dep.memory.clone(),
                     )
                     .await;
                     let _ = dep
@@ -160,6 +162,7 @@ impl AgentLoop {
                 messages: self.builder.messages.clone(),
                 tools: dep.pipeline.registry.specs(),
                 tool_policy: ToolPolicyHint::PreferTools,
+                response_format: None,
             };
             let messages_digest = canonical_json_digest(&serde_json::to_value(&req.messages)?);
             let model_snap = dep

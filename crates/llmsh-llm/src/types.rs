@@ -73,12 +73,22 @@ pub enum ToolPolicyHint {
     RequireTools,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum ResponseFormat {
+    #[default]
+    Text,
+    JsonObject,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub system: Option<String>,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,
     pub tool_policy: ToolPolicyHint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

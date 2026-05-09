@@ -16,6 +16,12 @@ pub(crate) struct ModelEntry {
 }
 
 #[derive(Serialize)]
+pub struct WireResponseFormat {
+    #[serde(rename = "type")]
+    pub kind: &'static str, // "text" | "json_object"
+}
+
+#[derive(Serialize)]
 pub struct ChatRequest<'a> {
     pub model: &'a str,
     pub messages: Vec<WireMessage>,
@@ -23,6 +29,8 @@ pub struct ChatRequest<'a> {
     pub tools: Vec<WireTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<WireResponseFormat>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

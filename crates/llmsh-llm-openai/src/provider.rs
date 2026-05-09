@@ -61,11 +61,18 @@ impl LlmProvider for OpenAIProvider {
         let messages = to_wire_messages(req.system.as_deref(), &req.messages);
         let tools = to_wire_tools(&req.tools);
         let tool_choice = tool_choice_for(req.tool_policy);
+        let response_format = req.response_format.as_ref().map(|f| match f {
+            llmsh_llm::types::ResponseFormat::Text => WireResponseFormat { kind: "text" },
+            llmsh_llm::types::ResponseFormat::JsonObject => WireResponseFormat {
+                kind: "json_object",
+            },
+        });
         let body = ChatRequest {
             model: &model,
             messages,
             tools,
             tool_choice,
+            response_format,
         };
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let resp = self
