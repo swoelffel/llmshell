@@ -149,6 +149,7 @@ fn flag_label(f: &PolicyFlag) -> &'static str {
         PolicyFlag::LargeBlastRadius => "large_blast_radius",
         PolicyFlag::UsesShell => "uses_shell",
         PolicyFlag::UsesPrivilegeEscalation => "privilege_escalation",
+        PolicyFlag::KnownReadOnlyCommand => "known_read_only_command",
     }
 }
 

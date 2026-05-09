@@ -21,6 +21,9 @@ pub enum PolicyFlag {
     LargeBlastRadius,
     UsesShell,
     UsesPrivilegeEscalation,
+    /// Set by the pipeline when the deterministic classifier matched a
+    /// read-only `run_process` invocation. Audit-visible.
+    KnownReadOnlyCommand,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
