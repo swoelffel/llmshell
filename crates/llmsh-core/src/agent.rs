@@ -13,7 +13,8 @@ use llmsh_audit::writer::AuditWriter;
 use llmsh_llm::provider::LlmProvider;
 use llmsh_llm::types::{FinishReason, LlmRequest, MessageRole, ToolPolicyHint};
 use llmsh_policy::context::PolicyContext;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub struct AgentBounds {
@@ -41,6 +42,10 @@ pub struct AgentDeps {
     pub verbose: u8,
     /// Live session stats; shared with the status-line prompt.
     pub stats: Arc<std::sync::RwLock<SessionStats>>,
+    /// Last directory before the current `cd` (shared with the REPL).
+    pub oldpwd: Arc<Mutex<Option<PathBuf>>>,
+    /// User home, used to resolve `cd` / `cd ~` / `cd ~/foo`.
+    pub home: Option<PathBuf>,
 }
 
 fn persist_from_msg(memory: &Memory, m: &llmsh_llm::types::Message, insert_source: &str) {
@@ -369,7 +374,20 @@ impl AgentLoop {
                     }
 
                     if outcome.plan.has_deny() {
-                        // Surface a synthetic message so the user sees why
+                        // Synthesize tool-result messages for every step so
+                        // the conversation contains a `tool` reply for each
+                        // tool_call_id that was emitted by the assistant.
+                        // Without this, OpenAI returns 400 the next turn.
+                        for s in &outcome.plan.steps {
+                            self.builder.append_tool_denied(
+                                &s.call.id,
+                                &s.call.tool_name,
+                                "policy denied",
+                            );
+                            if let Some(last) = self.builder.messages.last() {
+                                persist_from_msg(&dep.memory, last, "turn");
+                            }
+                        }
                         return Ok(LoopResult {
                             assistant_text: Some(
                                 "Action refusée par la politique de sécurité.".into(),
@@ -399,11 +417,33 @@ impl AgentLoop {
                                 granted,
                             });
                         if !granted {
-                            self.builder.append_user_cancellation();
+                            for s in &outcome.plan.steps {
+                                self.builder.append_tool_denied(
+                                    &s.call.id,
+                                    &s.call.tool_name,
+                                    "user cancelled",
+                                );
+                                if let Some(last) = self.builder.messages.last() {
+                                    persist_from_msg(&dep.memory, last, "turn");
+                                }
+                            }
                             return Ok(LoopResult {
                                 assistant_text: Some("Action annulée.".into()),
                                 stopped_reason: "cancelled".into(),
                             });
+                        }
+                    }
+
+                    // Pre-pass: identify run_process(cd, ...) steps so we can
+                    // handle them in-process (subprocess `cd` would die with
+                    // the child, leaving the parent PWD unchanged).
+                    let mut cd_indices: Vec<usize> = Vec::new();
+                    for (i, s) in outcome.plan.steps.iter().enumerate() {
+                        if s.call.tool_name == "run_process" {
+                            let prog = s.call.args.get("program").and_then(|v| v.as_str());
+                            if prog == Some("cd") {
+                                cd_indices.push(i);
+                            }
                         }
                     }
 
@@ -426,10 +466,89 @@ impl AgentLoop {
                                 )),
                             });
                     }
-                    let results = dep
-                        .executor
-                        .run_sequential(&outcome.plan, &dep.policy_ctx.cwd)
-                        .await;
+                    // Build a sub-plan for the executor that excludes cd steps.
+                    let mut other_plan = outcome.plan.clone();
+                    other_plan.steps = outcome
+                        .plan
+                        .steps
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !cd_indices.contains(i))
+                        .map(|(_, s)| s.clone())
+                        .collect();
+                    let exec_cwd = dep.policy_ctx.cwd_snapshot();
+                    let mut exec_results = if other_plan.steps.is_empty() {
+                        Vec::new()
+                    } else {
+                        dep.executor.run_sequential(&other_plan, &exec_cwd).await
+                    };
+                    // Now build cd synthetic results and merge in plan order.
+                    let mut results: Vec<crate::executor::StepResult> =
+                        Vec::with_capacity(outcome.plan.steps.len());
+                    let mut exec_iter = exec_results.drain(..);
+                    for (i, step) in outcome.plan.steps.iter().enumerate() {
+                        if cd_indices.contains(&i) {
+                            let arg = step
+                                .call
+                                .args
+                                .get("args")
+                                .and_then(|v| v.as_array())
+                                .and_then(|a| a.first())
+                                .and_then(|v| v.as_str());
+                            let from = dep.policy_ctx.cwd_snapshot();
+                            let oldpwd = dep.oldpwd.lock().unwrap().clone();
+                            let target = crate::cwd::resolve_cd_target(
+                                arg,
+                                &from,
+                                dep.home.as_deref(),
+                                oldpwd.as_deref(),
+                            );
+                            let started = Instant::now();
+                            let res = match target {
+                                Ok(t) => crate::cwd::try_chdir(&dep.policy_ctx.cwd, &t),
+                                Err(e) => Err(e),
+                            };
+                            let duration = started.elapsed();
+                            match res {
+                                Ok(new) => {
+                                    *dep.oldpwd.lock().unwrap() = Some(from.clone());
+                                    let _ =
+                                        dep.audit.lock().unwrap().write(&AuditEvent::CwdChanged {
+                                            ts: now_iso(),
+                                            from: from.display().to_string(),
+                                            to: new.display().to_string(),
+                                            source: "tool".into(),
+                                        });
+                                    results.push(crate::executor::StepResult {
+                                        step_id: step.call.id.clone(),
+                                        tool_name: step.call.tool_name.clone(),
+                                        status: crate::executor::ExecutionStatus::Success,
+                                        output: Some(llmsh_tools::tool::ToolOutput {
+                                            stdout: format!("cwd: {}", new.display()),
+                                            stderr: None,
+                                            exit_code: Some(0),
+                                            truncated: false,
+                                            structured: None,
+                                        }),
+                                        error: None,
+                                        duration,
+                                    });
+                                }
+                                Err(e) => {
+                                    results.push(crate::executor::StepResult {
+                                        step_id: step.call.id.clone(),
+                                        tool_name: step.call.tool_name.clone(),
+                                        status: crate::executor::ExecutionStatus::Failed,
+                                        output: None,
+                                        error: Some(format!("cd: {}", e)),
+                                        duration,
+                                    });
+                                }
+                            }
+                        } else if let Some(r) = exec_iter.next() {
+                            results.push(r);
+                        }
+                    }
                     for r in &results {
                         let stdout_red = r
                             .output

@@ -160,6 +160,8 @@ pub fn build_test_deps_with_memory(
         memory,
         verbose: 0,
         stats: Arc::new(std::sync::RwLock::new(SessionStats::default())),
+        oldpwd: Arc::new(Mutex::new(None)),
+        home: None,
     });
     (deps, provider)
 }
@@ -184,7 +186,7 @@ pub fn build_simple_deps(
         Arc::new(AlwaysYesGate),
         audit_dir,
         PolicyContext {
-            cwd: canonical.clone(),
+            cwd: Arc::new(RwLock::new(canonical.clone())),
             workspace_root: canonical.clone(),
             allowed_roots: vec![canonical],
             sensitive_path_patterns: vec![],

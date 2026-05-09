@@ -74,8 +74,6 @@ fn build_deps(
     let registry = Arc::new(ToolRegistry::new());
     let policy = Arc::new(DefaultPolicyEngine::new(DefaultPolicyConfig {
         risk_actions: Default::default(),
-        sensitive_paths_action: llmsh_policy::engine::RiskAction::Confirm,
-        allow_outside_workspace: true,
     }));
     let pipeline = Pipeline {
         registry: registry.clone(),
@@ -104,7 +102,7 @@ fn build_deps(
             max_schema_repair_attempts: 1,
         },
         policy_ctx: PolicyContext {
-            cwd: std::env::temp_dir(),
+            cwd: std::sync::Arc::new(std::sync::RwLock::new(std::env::temp_dir())),
             workspace_root: std::env::temp_dir(),
             allowed_roots: vec![std::env::temp_dir()],
             sensitive_path_patterns: vec![],
@@ -115,6 +113,8 @@ fn build_deps(
         memory,
         verbose: 0,
         stats: Arc::new(RwLock::new(SessionStats::default())),
+        oldpwd: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        home: None,
         compact_config,
         memory_cfg: MemoryConfig::default(),
     })

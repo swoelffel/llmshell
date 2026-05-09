@@ -52,6 +52,7 @@ pub enum ClearSource {
     ClearAll,
     Compact,
     MemoryForget,
+    OrphanCleanup,
 }
 
 impl ClearSource {
@@ -62,6 +63,7 @@ impl ClearSource {
             Self::ClearAll => "clear_all",
             Self::Compact => "compact",
             Self::MemoryForget => "memory_forget",
+            Self::OrphanCleanup => "orphan_cleanup",
         }
     }
 }
@@ -364,6 +366,106 @@ impl Memory {
             .execute(&sql, refs.as_slice())
             .context("mark_messages_cleared_by_ids")?;
         Ok(n)
+    }
+
+    /// Detect assistant rows in the active conversation that emitted
+    /// `tool_calls` for which no matching `tool` reply exists later in the
+    /// conversation, and mark those assistant rows cleared. Returns the
+    /// number of orphan rows cleared.
+    ///
+    /// This repairs an OpenAI 400 on reload after a v0.2.6 session ended on
+    /// a denied or cancelled tool call.
+    pub fn cleanup_orphan_tool_calls(&self, ts: &str) -> anyhow::Result<usize> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let tx = conn
+            .transaction()
+            .context("begin cleanup_orphan_tool_calls")?;
+
+        // Load all active rows ordered by id.
+        let mut stmt = tx
+            .prepare(
+                "SELECT id, role, tool_call_id, tool_calls_json \
+                 FROM conversation_messages \
+                 WHERE cleared_at IS NULL \
+                 ORDER BY id ASC",
+            )
+            .context("prepare cleanup load")?;
+        struct Row {
+            id: i64,
+            role: String,
+            tool_call_id: Option<String>,
+            tool_calls_json: Option<String>,
+        }
+        let rows: Vec<Row> = stmt
+            .query_map([], |r| {
+                Ok(Row {
+                    id: r.get(0)?,
+                    role: r.get(1)?,
+                    tool_call_id: r.get(2)?,
+                    tool_calls_json: r.get(3)?,
+                })
+            })
+            .context("query cleanup load")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("collect cleanup load")?;
+        drop(stmt);
+
+        let mut orphan_ids: Vec<i64> = Vec::new();
+        for (idx, row) in rows.iter().enumerate() {
+            if row.role != "assistant" {
+                continue;
+            }
+            let Some(json) = row.tool_calls_json.as_deref() else {
+                continue;
+            };
+            // Parse the assistant row's tool_calls and collect their ids.
+            let parsed: serde_json::Value = match serde_json::from_str(json) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let Some(arr) = parsed.as_array() else {
+                continue;
+            };
+            let call_ids: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                .collect();
+            if call_ids.is_empty() {
+                continue;
+            }
+            // Look at all subsequent tool rows to find matching tool_call_id.
+            let mut all_matched = true;
+            for cid in &call_ids {
+                let matched = rows[idx + 1..].iter().any(|later| {
+                    later.role == "tool" && later.tool_call_id.as_deref() == Some(cid.as_str())
+                });
+                if !matched {
+                    all_matched = false;
+                    break;
+                }
+            }
+            if !all_matched {
+                orphan_ids.push(row.id);
+            }
+        }
+
+        let mut cleared = 0usize;
+        for id in &orphan_ids {
+            cleared += tx
+                .execute(
+                    "UPDATE conversation_messages \
+                     SET cleared_at = ?1, cleared_source = ?2 \
+                     WHERE id = ?3 AND cleared_at IS NULL",
+                    params![ts, ClearSource::OrphanCleanup.as_str(), id],
+                )
+                .context("clear orphan row")?;
+        }
+
+        tx.commit().context("commit cleanup_orphan_tool_calls")?;
+        Ok(cleared)
     }
 
     // -----------------------------------------------------------------------

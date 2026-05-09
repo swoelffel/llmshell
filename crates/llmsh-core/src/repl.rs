@@ -14,7 +14,7 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 pub struct ReplState {
-    pub cwd: std::path::PathBuf,
+    pub cwd: crate::cwd::SharedCwd,
     pub workspace_root: std::path::PathBuf,
     pub allowed_roots: Vec<std::path::PathBuf>,
     pub history_recent: Vec<String>,
@@ -32,6 +32,49 @@ pub struct Repl {
     pub model_provider_prefix: Option<String>,
     pub prompt: Box<dyn reedline::Prompt>,
 }
+
+const HELP_TEXT: &str = "\
+LLMShell — interactive agentic shell
+
+Input modes:
+  <text>              Natural language — sent to the LLM agent.
+  !<command>          Raw shell — runs <command> directly in the current shell.
+  /<command>          Meta command — see below.
+
+Session:
+  /help               Show this help.
+  /exit               Quit (Ctrl-D also works).
+
+Context & memory:
+  /clear-context              Drop the current conversation history.
+  /clear-memory               Drop all curated long-term facts.
+  /clear-all                  Both of the above.
+  /compact                    Summarize older messages to free context budget.
+  /memory list                List curated long-term facts.
+  /memory forget <id>         Remove fact #<id>.
+  /memory add [cat:]<claim>   Add a fact. Categories: identity, preference,
+                              project, todo, other (default: other).
+
+Filesystem:
+  /pwd                Print the current working directory.
+  /cd <path>          Change directory (must stay inside allowed roots).
+
+History:
+  /history            Print the last 20 inputs of this session.
+
+Model:
+  /model              Show the active model.
+  /model list         List available models from the provider.
+  /model set <id>     Switch the active model and persist it to config.
+
+Init:
+  /init               Capture a machine/tooling audit into long-term memory.
+
+Examples:
+  !ls -la
+  /cd ../foo
+  /memory add preference: prefers tabs over spaces
+  /model set gpt-4.1-mini";
 
 impl Repl {
     pub async fn run(mut self) -> anyhow::Result<()> {
@@ -118,7 +161,7 @@ impl Repl {
     async fn handle_meta(&mut self, cmd: &str, args: &[String]) -> anyhow::Result<()> {
         match cmd {
             "help" => {
-                println!("/help /exit /clear-context /clear-memory /clear-all /compact /memory [list|forget <id>|add [category:]<claim>] /pwd /cd <path> /history /model [list|set <id>] /init");
+                println!("{}", HELP_TEXT);
             }
             "init" => {
                 let audit = MachineAudit::capture_with_tooling().await;
@@ -146,27 +189,9 @@ impl Repl {
                             });
                 }
             }
-            "pwd" => println!("{}", self.state.cwd.display()),
+            "pwd" => println!("{}", crate::cwd::snapshot(&self.state.cwd).display()),
             "cd" => {
-                if let Some(p) = args.first() {
-                    let target = if std::path::Path::new(p).is_absolute() {
-                        std::path::PathBuf::from(p)
-                    } else {
-                        self.state.cwd.join(p)
-                    };
-                    let canonical = std::fs::canonicalize(&target).unwrap_or(target);
-                    let inside = self.state.allowed_roots.iter().any(|r| {
-                        let cr = std::fs::canonicalize(r).unwrap_or(r.clone());
-                        canonical.starts_with(cr)
-                    });
-                    if inside {
-                        self.state.cwd = canonical;
-                    } else {
-                        eprintln!(
-                            "/cd refused: outside allowed_roots (use /allow-root in a future version)"
-                        );
-                    }
-                }
+                self.change_dir_via(args.first().map(String::as_str), "meta");
             }
             "history" => {
                 for h in self.state.history_recent.iter().rev().take(20).rev() {
@@ -409,7 +434,51 @@ impl Repl {
         }
     }
 
+    fn change_dir_via(&mut self, raw_arg: Option<&str>, source: &'static str) {
+        let current = crate::cwd::snapshot(&self.state.cwd);
+        let oldpwd = self.deps.oldpwd.lock().unwrap().clone();
+        let target = match crate::cwd::resolve_cd_target(
+            raw_arg,
+            &current,
+            self.deps.home.as_deref(),
+            oldpwd.as_deref(),
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("cd: {}", e);
+                return;
+            }
+        };
+        match crate::cwd::try_chdir(&self.state.cwd, &target) {
+            Ok(new) => {
+                let _ = self
+                    .deps
+                    .audit
+                    .lock()
+                    .unwrap()
+                    .write(&AuditEvent::CwdChanged {
+                        ts: now_iso(),
+                        from: current.display().to_string(),
+                        to: new.display().to_string(),
+                        source: source.into(),
+                    });
+                *self.deps.oldpwd.lock().unwrap() = Some(current);
+                println!("cd: {}", new.display());
+            }
+            Err(e) => eprintln!("cd: {}", e),
+        }
+    }
+
     async fn handle_raw_shell(&mut self, command: &str) -> anyhow::Result<()> {
+        // Intercept `cd ...` / bare `cd` so the parent process actually
+        // changes directory; spawning `sh -c cd ...` would die with the child.
+        let trimmed = command.trim_start();
+        if trimmed == "cd" || trimmed.starts_with("cd ") || trimmed.starts_with("cd\t") {
+            let rest = trimmed.trim_start_matches("cd").trim();
+            let arg = if rest.is_empty() { None } else { Some(rest) };
+            self.change_dir_via(arg, "raw_shell");
+            return Ok(());
+        }
         let hits = self.risk_scan.scan(command);
         if !hits.is_empty() {
             println!("⚠ critical patterns detected: {}", hits.join(", "));
@@ -429,7 +498,7 @@ impl Repl {
             cmd.arg(a);
         }
         cmd.arg(command)
-            .current_dir(&self.state.cwd)
+            .current_dir(crate::cwd::snapshot(&self.state.cwd))
             .kill_on_drop(true);
         let cancel = self.root_cancel.clone();
         let child = cmd.spawn()?;

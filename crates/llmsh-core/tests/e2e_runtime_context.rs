@@ -29,7 +29,7 @@ async fn system_prompt_contains_runtime_context_block() {
     let canonical_ws =
         std::fs::canonicalize(workspace.path()).unwrap_or_else(|_| workspace.path().to_path_buf());
     let policy_ctx = PolicyContext {
-        cwd: canonical_ws.clone(),
+        cwd: std::sync::Arc::new(std::sync::RwLock::new(canonical_ws.clone())),
         workspace_root: canonical_ws.clone(),
         allowed_roots: vec![canonical_ws.clone()],
         sensitive_path_patterns: vec![],
@@ -94,6 +94,8 @@ async fn system_prompt_contains_runtime_context_block() {
             stats: Arc::new(std::sync::RwLock::new(
                 llmsh_core::session_stats::SessionStats::default(),
             )),
+            oldpwd: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            home: None,
         });
         (deps, provider)
     };

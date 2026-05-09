@@ -99,7 +99,7 @@ async fn external_cancel_recorded_in_audit() {
         compact_config: CompactConfig::default(),
         memory_cfg: MemoryConfig::default(),
         policy_ctx: PolicyContext {
-            cwd: tmp.path().to_path_buf(),
+            cwd: std::sync::Arc::new(std::sync::RwLock::new(tmp.path().to_path_buf())),
             workspace_root: tmp.path().to_path_buf(),
             allowed_roots: vec![tmp.path().to_path_buf()],
             sensitive_path_patterns: vec![],
@@ -112,6 +112,8 @@ async fn external_cancel_recorded_in_audit() {
         stats: Arc::new(std::sync::RwLock::new(
             llmsh_core::session_stats::SessionStats::default(),
         )),
+        oldpwd: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        home: None,
     });
 
     // Fire the cancel token after 100 ms while the agent loop is running.

@@ -16,11 +16,13 @@ impl From<LlmResponse> for ModelPlan {
     }
 }
 
+#[derive(Clone)]
 pub struct CheckedStep {
     pub call: CheckedToolCall,
     pub decision: PolicyDecision,
 }
 
+#[derive(Clone)]
 pub struct CheckedPlan {
     pub plan_id: String,
     pub steps: Vec<CheckedStep>,

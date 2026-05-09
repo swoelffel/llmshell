@@ -128,7 +128,7 @@ async fn session_stats_accumulate_across_turns() {
         compact_config: CompactConfig::default(),
         memory_cfg: MemoryConfig::default(),
         policy_ctx: PolicyContext {
-            cwd: canonical_tmp.clone(),
+            cwd: std::sync::Arc::new(std::sync::RwLock::new(canonical_tmp.clone())),
             workspace_root: canonical_tmp.clone(),
             allowed_roots: vec![canonical_tmp],
             sensitive_path_patterns: vec![],
@@ -139,6 +139,8 @@ async fn session_stats_accumulate_across_turns() {
         memory: Arc::new(Memory::open_in_memory().unwrap()),
         verbose: 0,
         stats: stats.clone(),
+        oldpwd: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        home: None,
     });
 
     let mut agent = AgentLoop {

@@ -142,6 +142,12 @@ pub enum AuditEvent {
         category: String,
         source: String, // 'manual'|'compact'|'init'
     },
+    CwdChanged {
+        ts: String,
+        from: String,
+        to: String,
+        source: String, // 'raw_shell'|'tool'|'meta'
+    },
 }
 
 pub fn now_iso() -> String {
@@ -186,6 +192,32 @@ mod tests {
         {
             assert_eq!(scope, "context");
             assert_eq!(rows_affected, 5);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn cwd_changed_roundtrip() {
+        let ev = AuditEvent::CwdChanged {
+            ts: "2026-05-09T00:00:00.000Z".into(),
+            from: "/old".into(),
+            to: "/new".into(),
+            source: "meta".into(),
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "cwd_changed");
+        assert_eq!(json["from"], "/old");
+        assert_eq!(json["to"], "/new");
+        assert_eq!(json["source"], "meta");
+        let roundtrip: AuditEvent = serde_json::from_value(json).unwrap();
+        if let AuditEvent::CwdChanged {
+            from, to, source, ..
+        } = roundtrip
+        {
+            assert_eq!(from, "/old");
+            assert_eq!(to, "/new");
+            assert_eq!(source, "meta");
         } else {
             panic!("wrong variant");
         }

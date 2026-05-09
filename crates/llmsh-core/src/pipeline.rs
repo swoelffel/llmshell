@@ -96,12 +96,12 @@ impl Pipeline {
             .ok_or_else(|| PipelineError::UnknownTool(tc.name.clone()))?;
         // Minimal schema validation: required fields per top-level schema "required" array.
         validate_schema(&tool.input_schema(), &tc.args).map_err(PipelineError::Schema)?;
+        let cwd_snap = ctx.cwd_snapshot();
         let enriched = enrich(
             tc,
             tool.declared_risk(),
             EnrichmentInput {
-                cwd: &ctx.cwd,
-                workspace_root: &ctx.workspace_root,
+                cwd: &cwd_snap,
                 home: self.home.as_deref(),
                 sensitive_patterns: sensitive,
             },

@@ -64,13 +64,23 @@ pub struct PolicyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemPolicy {
     pub allowed_roots: Vec<String>,
+    /// Deprecated as of v0.2.7 — workspace boundary removed. Kept for
+    /// backwards-compatible config parsing.
+    #[serde(default)]
     pub allow_outside_workspace: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SensitivePathsPolicy {
+    /// Deprecated as of v0.2.7 — sensitive paths now always require strong
+    /// confirmation. Kept for backwards-compatible config parsing.
+    #[serde(default = "default_sensitive_action")]
     pub action: String,
     pub patterns: Vec<String>,
+}
+
+fn default_sensitive_action() -> String {
+    "confirm_strong".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

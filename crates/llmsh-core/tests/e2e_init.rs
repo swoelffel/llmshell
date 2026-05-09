@@ -23,7 +23,7 @@ fn stop_response(text: &str) -> LlmResponse {
 fn policy_ctx_for(cwd: &std::path::Path) -> PolicyContext {
     let canonical = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
     PolicyContext {
-        cwd: canonical.clone(),
+        cwd: std::sync::Arc::new(std::sync::RwLock::new(canonical.clone())),
         workspace_root: canonical.clone(),
         allowed_roots: vec![canonical],
         sensitive_path_patterns: vec![],

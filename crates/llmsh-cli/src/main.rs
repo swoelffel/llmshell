@@ -135,8 +135,10 @@ async fn main() -> anyhow::Result<()> {
             }
         })
         .collect();
+    let shared_cwd = llmsh_core::cwd::new_shared(workspace_root.clone());
+    let oldpwd = Arc::new(std::sync::Mutex::new(None::<PathBuf>));
     let policy_ctx = PolicyContext {
-        cwd: workspace_root.clone(),
+        cwd: shared_cwd.clone(),
         workspace_root: workspace_root.clone(),
         allowed_roots: allowed_roots.clone(),
         sensitive_path_patterns: cfg.policy.sensitive_paths.patterns.clone(),
@@ -161,6 +163,15 @@ async fn main() -> anyhow::Result<()> {
     // 6. Memory
     let memory_path = memory_path_from_env_or_default(std::env::var("LLMSH_MEMORY_DB").ok())?;
     let memory = Arc::new(Memory::open(&memory_path)?);
+
+    // One-shot cleanup of orphan assistant.tool_calls left over from a prior
+    // session that ended on Deny / Cancel before v0.2.7. Without this OpenAI
+    // returns 400 on the next reload.
+    match memory.cleanup_orphan_tool_calls(&now_iso()) {
+        Ok(0) => {}
+        Ok(n) => println!("(cleaned {} orphan tool call(s) from prior session)", n),
+        Err(e) => tracing::warn!("orphan cleanup failed: {}", e),
+    }
 
     // Auto-bootstrap: run /init on first launch when DB has no audit entry.
     let no_autoinit = std::env::var("LLMSH_NO_AUTOINIT")
@@ -241,6 +252,8 @@ async fn main() -> anyhow::Result<()> {
         memory,
         verbose: verbose_level,
         stats: stats.clone(),
+        oldpwd: oldpwd.clone(),
+        home: home.clone(),
     });
 
     let prompt: Box<dyn reedline::Prompt> = if cfg.verbose.status_line {
@@ -256,7 +269,7 @@ async fn main() -> anyhow::Result<()> {
     let repl = Repl {
         deps,
         state: ReplState {
-            cwd: workspace_root.clone(),
+            cwd: shared_cwd.clone(),
             workspace_root,
             allowed_roots,
             history_recent: vec![],
@@ -314,11 +327,7 @@ fn policy_config_from(cfg: &Config) -> DefaultPolicyConfig {
     m.insert(RiskLevel::Network, map_action(&cfg.policy.network));
     m.insert(RiskLevel::Privileged, map_action(&cfg.policy.privileged));
     m.insert(RiskLevel::Unknown, map_action(&cfg.policy.unknown));
-    DefaultPolicyConfig {
-        risk_actions: m,
-        sensitive_paths_action: map_action(&cfg.policy.sensitive_paths.action),
-        allow_outside_workspace: cfg.policy.filesystem.allow_outside_workspace,
-    }
+    DefaultPolicyConfig { risk_actions: m }
 }
 
 fn expand_tilde(s: &str) -> PathBuf {

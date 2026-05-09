@@ -38,7 +38,7 @@ async fn destructive_rm_rf_cancelled_by_gate() {
     let audit_dir = tempfile::tempdir().unwrap();
 
     let policy_ctx = PolicyContext {
-        cwd: tmp.path().to_path_buf(),
+        cwd: std::sync::Arc::new(std::sync::RwLock::new(tmp.path().to_path_buf())),
         workspace_root: tmp.path().to_path_buf(),
         allowed_roots: vec![tmp.path().to_path_buf()],
         sensitive_path_patterns: vec![],

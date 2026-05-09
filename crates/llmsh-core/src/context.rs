@@ -247,6 +247,24 @@ impl ContextBuilder {
         });
     }
 
+    /// Append a synthetic tool-result message for a tool_call that the policy
+    /// denied or the user cancelled. This pairs the assistant's tool_call with
+    /// a `tool` reply so the conversation history stays well-formed for
+    /// providers (notably OpenAI) that 400 if a tool_call has no follow-up.
+    pub fn append_tool_denied(&mut self, tool_call_id: &str, tool_name: &str, reason: &str) {
+        let body = serde_json::json!({
+            "status": "denied",
+            "reason": reason,
+        });
+        self.messages.push(Message {
+            role: MessageRole::Tool,
+            content: body.to_string(),
+            tool_call_id: Some(tool_call_id.into()),
+            name: Some(tool_name.into()),
+            tool_calls: None,
+        });
+    }
+
     pub fn append_user_cancellation(&mut self) {
         self.messages.push(Message {
             role: MessageRole::User,

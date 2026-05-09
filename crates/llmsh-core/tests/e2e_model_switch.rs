@@ -207,7 +207,7 @@ async fn rendered_system_prompt_reflects_model_switch() {
         compact_config: CompactConfig::default(),
         memory_cfg: MemoryConfig::default(),
         policy_ctx: PolicyContext {
-            cwd: canonical_ws.clone(),
+            cwd: std::sync::Arc::new(std::sync::RwLock::new(canonical_ws.clone())),
             workspace_root: canonical_ws.clone(),
             allowed_roots: vec![canonical_ws.clone()],
             sensitive_path_patterns: vec![],
@@ -220,6 +220,8 @@ async fn rendered_system_prompt_reflects_model_switch() {
         stats: Arc::new(std::sync::RwLock::new(
             llmsh_core::session_stats::SessionStats::default(),
         )),
+        oldpwd: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        home: None,
     });
 
     // Turn 1: capture initial system prompt.

@@ -2,7 +2,7 @@ mod common;
 
 use common::build_test_deps;
 use llmsh_core::agent::AgentLoop;
-use llmsh_core::confirm::AlwaysYesGate;
+use llmsh_core::confirm::{AlwaysNoGate, AlwaysYesGate};
 use llmsh_core::context::ContextBuilder;
 use llmsh_llm::types::{FinishReason, LlmResponse, ToolCall};
 use llmsh_policy::context::PolicyContext;
@@ -11,11 +11,13 @@ use llmsh_tools::registry::ToolRegistry;
 use serde_json::json;
 use std::sync::Arc;
 
-/// `read_file ~/.ssh/id_rsa` must be denied by the sensitive-path policy.
-/// The audit log must contain `"kind":"deny"` and must NOT contain a
-/// `tool_execution_start` event.
+/// `read_file ~/.ssh/id_rsa` must require strong confirmation (sensitive
+/// path policy). With `AlwaysNoGate` the user "cancels", which must:
+/// - end with `stopped_reason == "cancelled"`,
+/// - emit a confirmation_asked event with `"granted":false`,
+/// - NOT execute the tool (no `tool_execution_start`).
 #[tokio::test]
-async fn sensitive_path_denied() {
+async fn sensitive_path_requires_strong_confirmation() {
     let tmp = tempfile::tempdir().unwrap();
 
     // The sensitive pattern covers anything under ~/.ssh
@@ -49,7 +51,7 @@ async fn sensitive_path_denied() {
     ];
 
     let policy_ctx = PolicyContext {
-        cwd: tmp.path().to_path_buf(),
+        cwd: std::sync::Arc::new(std::sync::RwLock::new(tmp.path().to_path_buf())),
         workspace_root: tmp.path().to_path_buf(),
         allowed_roots: vec![tmp.path().to_path_buf(), home.clone()],
         sensitive_path_patterns: sensitive_patterns.clone(),
@@ -58,7 +60,7 @@ async fn sensitive_path_denied() {
     let deps = build_test_deps(
         registry,
         scripted,
-        Arc::new(AlwaysYesGate),
+        Arc::new(AlwaysNoGate),
         audit_dir.path(),
         policy_ctx,
         sensitive_patterns,
@@ -69,18 +71,22 @@ async fn sensitive_path_denied() {
         builder: ContextBuilder::new(4096),
     };
     let res = agent.run("lis le fichier ssh").await.unwrap();
-    assert_eq!(res.stopped_reason, "denied");
+    assert_eq!(res.stopped_reason, "cancelled");
 
     deps.audit.lock().unwrap().flush().unwrap();
     let log = std::fs::read_to_string(audit_dir.path().join("test-session.jsonl")).unwrap();
 
     assert!(
-        log.contains("\"kind\":\"deny\""),
-        "expected deny action in audit log"
+        log.contains("\"strong\":true"),
+        "expected strong confirmation required in audit log"
+    );
+    assert!(
+        log.contains("\"granted\":false"),
+        "expected user to refuse the strong confirmation"
     );
     assert!(
         !log.contains("\"type\":\"tool_execution_start\""),
-        "tool_execution_start must NOT appear when path is denied"
+        "tool_execution_start must NOT appear when user cancels"
     );
 }
 
@@ -107,7 +113,7 @@ async fn unknown_tool_denied() {
     let audit_dir = tempfile::tempdir().unwrap();
 
     let policy_ctx = PolicyContext {
-        cwd: tmp.path().to_path_buf(),
+        cwd: std::sync::Arc::new(std::sync::RwLock::new(tmp.path().to_path_buf())),
         workspace_root: tmp.path().to_path_buf(),
         allowed_roots: vec![tmp.path().to_path_buf()],
         sensitive_path_patterns: vec![],

@@ -107,7 +107,7 @@ async fn redaction_no_literal_secrets_in_audit() {
             compact_config: CompactConfig::default(),
             memory_cfg: MemoryConfig::default(),
             policy_ctx: PolicyContext {
-                cwd: tmp_canonical.clone(),
+                cwd: std::sync::Arc::new(std::sync::RwLock::new(tmp_canonical.clone())),
                 workspace_root: tmp_canonical.clone(),
                 allowed_roots: vec![tmp_canonical.clone()],
                 sensitive_path_patterns: vec![],
@@ -120,6 +120,8 @@ async fn redaction_no_literal_secrets_in_audit() {
             stats: Arc::new(std::sync::RwLock::new(
                 llmsh_core::session_stats::SessionStats::default(),
             )),
+            oldpwd: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            home: None,
         })
     };
 

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 pub struct EnrichmentInput<'a> {
     pub cwd: &'a Path,
-    pub workspace_root: &'a Path,
     pub home: Option<&'a Path>,
     pub sensitive_patterns: &'a [String],
 }
@@ -27,12 +26,10 @@ pub fn enrich(
             input.cwd.join(&expanded)
         };
         let canon = std::fs::canonicalize(&abs).unwrap_or(abs.clone());
-        let inside = canon.starts_with(input.workspace_root);
         let sensitive = matches_sensitive(&canon, input.sensitive_patterns, input.home);
         paths.push(ResolvedPath {
             original: raw.to_string(),
             canonical: canon,
-            inside_workspace: inside,
             matches_sensitive: sensitive,
         });
     };
@@ -141,7 +138,6 @@ mod tests {
             RiskLevel::Unknown,
             EnrichmentInput {
                 cwd: &cwd,
-                workspace_root: &cwd,
                 home: None,
                 sensitive_patterns: &[],
             },
@@ -162,7 +158,6 @@ mod tests {
             RiskLevel::Unknown,
             EnrichmentInput {
                 cwd: &cwd,
-                workspace_root: &cwd,
                 home: None,
                 sensitive_patterns: &[],
             },
