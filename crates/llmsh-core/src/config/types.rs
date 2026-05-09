@@ -59,6 +59,24 @@ pub struct PolicyConfig {
     pub unknown: String,
     pub filesystem: FilesystemPolicy,
     pub sensitive_paths: SensitivePathsPolicy,
+    #[serde(default)]
+    pub run_process: RunProcessPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RunProcessPolicy {
+    /// When true (default), `run_process` invocations matching the
+    /// `safe_commands` allowlist are downgraded from Unknown → ReadOnly.
+    pub auto_classify_read_only: bool,
+}
+
+impl Default for RunProcessPolicy {
+    fn default() -> Self {
+        Self {
+            auto_classify_read_only: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +266,7 @@ impl Config {
                         "**/secrets.*".into(),
                     ],
                 },
+                run_process: RunProcessPolicy::default(),
             },
             audit: AuditConfig {
                 enabled: true,
