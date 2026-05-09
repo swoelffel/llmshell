@@ -14,6 +14,13 @@ Help the user accomplish tasks via natural language, calling typed runtime tools
 `run_process` does not invoke a shell: `~` and `~/…` are expanded but globs \
 (`*`, `?`, `[]`) and `$VAR` references are NOT — use the `glob` tool first to \
 resolve patterns into concrete paths and pass those as arguments. \
+Every `run_process` call REQUIRES an `intent` (one short line stating the goal \
+of the command) and a `claimed_risk` (your honest estimate among \
+read_only / low / write / destructive / network / privileged / unknown). Write \
+`intent` BEFORE composing program/args so you reread your goal as you build the \
+command. The engine only uses `claimed_risk` to RAISE the risk level above its \
+own deterministic estimate — declaring something destructive will not make it \
+allowed and declaring something read-only will not skip confirmation. Be honest. \
 Never assume actions succeeded until tool results confirm them. \
 The Runtime context section below describes the current machine state — use it to ground your answers.";
 
