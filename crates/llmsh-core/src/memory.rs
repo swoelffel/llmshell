@@ -1,10 +1,7 @@
-use crate::text::truncate_to_byte_budget;
 use anyhow::Context as _;
 use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Mutex;
-
-const SUMMARY_MAX_BYTES: usize = 200;
 
 pub struct Memory {
     conn: Mutex<Connection>,
@@ -22,6 +19,59 @@ pub struct InitAudit {
     pub summary_md: String,
 }
 
+// ---------------------------------------------------------------------------
+// v0.2.6 types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ConversationMessage {
+    pub id: i64, // 0 if not yet persisted
+    pub ts: String,
+    pub role: String, // 'user'|'assistant'|'tool'|'system'
+    pub content: String,
+    pub tool_call_id: Option<String>,
+    pub name: Option<String>,
+    pub tool_calls_json: Option<String>,
+    pub insert_source: String, // 'turn' | 'compact' | 'compact_tail'
+}
+
+#[derive(Debug, Clone)]
+pub struct Fact {
+    pub id: i64,
+    pub generation: i64,
+    pub ts: String,
+    pub category: String,
+    pub claim: String,
+    pub insert_source: String, // 'compact'|'manual'|'init'
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearSource {
+    ClearContext,
+    ClearMemory,
+    ClearAll,
+    Compact,
+    MemoryForget,
+}
+
+impl ClearSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ClearContext => "clear_context",
+            Self::ClearMemory => "clear_memory",
+            Self::ClearAll => "clear_all",
+            Self::Compact => "compact",
+            Self::MemoryForget => "memory_forget",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated legacy stubs — removed in task 7
+// ---------------------------------------------------------------------------
+
+#[allow(deprecated)]
+#[deprecated(note = "removed in task 7; use ConversationMessage instead")]
 pub struct RecentAction {
     pub ts: String,
     pub kind: ActionKind,
@@ -29,13 +79,16 @@ pub struct RecentAction {
     pub detail_json: Option<String>,
 }
 
+#[allow(deprecated)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[deprecated(note = "removed in task 7; use ClearSource / ConversationMessage instead")]
 pub enum ActionKind {
     UserInput,
     Assistant,
     Tool,
 }
 
+#[allow(deprecated)]
 impl ActionKind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -54,6 +107,8 @@ impl ActionKind {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
 
 impl Memory {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
@@ -92,7 +147,6 @@ impl Memory {
             in_memory: false,
         };
         mem.migrate()?;
-        mem.prune()?;
         Ok(mem)
     }
 
@@ -112,6 +166,7 @@ impl Memory {
             .lock()
             .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
 
+        // v1 — original tables.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
@@ -127,13 +182,6 @@ impl Memory {
                 shell        TEXT,
                 summary_md   TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS recent_actions (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts           TEXT NOT NULL,
-                kind         TEXT NOT NULL,
-                summary      TEXT NOT NULL,
-                detail_json  TEXT
-            );
             INSERT OR IGNORE INTO schema_version (version) VALUES (1);",
         )
         .context("run schema v1 migrations")?;
@@ -141,14 +189,51 @@ impl Memory {
         let version: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .context("read schema_version")?;
-        if version > 1 {
+
+        if version < 2 {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS recent_actions;
+
+                CREATE TABLE IF NOT EXISTS conversation_messages (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts              TEXT NOT NULL,
+                    role            TEXT NOT NULL,
+                    content         TEXT NOT NULL,
+                    tool_call_id    TEXT,
+                    name            TEXT,
+                    tool_calls_json TEXT,
+                    insert_source   TEXT NOT NULL,
+                    cleared_at      TEXT,
+                    cleared_source  TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_conv_active
+                    ON conversation_messages(cleared_at);
+
+                CREATE TABLE IF NOT EXISTS long_term_facts (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    generation      INTEGER NOT NULL,
+                    ts              TEXT NOT NULL,
+                    category        TEXT NOT NULL,
+                    claim           TEXT NOT NULL,
+                    insert_source   TEXT NOT NULL,
+                    cleared_at      TEXT,
+                    cleared_source  TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_facts_active
+                    ON long_term_facts(generation, cleared_at);
+
+                INSERT INTO schema_version (version) VALUES (2);",
+            )
+            .context("run schema v2 migrations")?;
+        }
+
+        if version > 2 {
             anyhow::bail!(
-                "memory db schema version {} is newer than supported (1)",
+                "memory db schema version {} is newer than supported (2)",
                 version
             );
         }
 
-        // WAL mode is not supported for in-memory databases.
         if !self.in_memory {
             conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
                 .context("enable WAL")?;
@@ -158,20 +243,6 @@ impl Memory {
             anyhow::ensure!(mode == "wal", "expected WAL journal mode, got {}", mode);
         }
 
-        Ok(())
-    }
-
-    fn prune(&self) -> anyhow::Result<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
-        conn.execute(
-            "DELETE FROM recent_actions WHERE id NOT IN \
-             (SELECT id FROM recent_actions ORDER BY id DESC LIMIT 1000)",
-            [],
-        )
-        .context("prune recent_actions")?;
         Ok(())
     }
 
@@ -228,50 +299,274 @@ impl Memory {
         }
     }
 
-    pub fn append_action(&self, action: &RecentAction) -> anyhow::Result<()> {
-        let summary = truncate_to_byte_budget(&action.summary, SUMMARY_MAX_BYTES);
+    // -----------------------------------------------------------------------
+    // Deprecated legacy stubs — TODO task 7: remove these
+    // -----------------------------------------------------------------------
+
+    #[deprecated(note = "no-op stub; removed in task 7")]
+    #[allow(deprecated)]
+    pub fn append_action(&self, _action: &RecentAction) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    #[deprecated(note = "no-op stub; removed in task 7")]
+    #[allow(deprecated)]
+    pub fn last_actions(&self, _n: usize) -> anyhow::Result<Vec<RecentAction>> {
+        Ok(vec![])
+    }
+
+    // -----------------------------------------------------------------------
+    // Conversation messages (v0.2.6)
+    // -----------------------------------------------------------------------
+
+    pub fn append_message(&self, m: &ConversationMessage) -> anyhow::Result<i64> {
         let conn = self
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
         conn.execute(
-            "INSERT INTO recent_actions (ts, kind, summary, detail_json) VALUES (?1, ?2, ?3, ?4)",
-            params![action.ts, action.kind.as_str(), summary, action.detail_json],
+            "INSERT INTO conversation_messages \
+             (ts, role, content, tool_call_id, name, tool_calls_json, insert_source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                m.ts,
+                m.role,
+                m.content,
+                m.tool_call_id,
+                m.name,
+                m.tool_calls_json,
+                m.insert_source,
+            ],
         )
-        .context("append_action")?;
-        Ok(())
+        .context("append_message")?;
+        Ok(conn.last_insert_rowid())
     }
 
-    pub fn last_actions(&self, n: usize) -> anyhow::Result<Vec<RecentAction>> {
+    pub fn load_active_conversation(&self) -> anyhow::Result<Vec<ConversationMessage>> {
         let conn = self
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
         let mut stmt = conn
             .prepare(
-                "SELECT ts, kind, summary, detail_json \
-                 FROM recent_actions ORDER BY id DESC LIMIT ?1",
+                "SELECT id, ts, role, content, tool_call_id, name, tool_calls_json, insert_source \
+                 FROM conversation_messages \
+                 WHERE cleared_at IS NULL \
+                 ORDER BY id ASC",
             )
-            .context("prepare last_actions")?;
-        let mut rows: Vec<RecentAction> = stmt
-            .query_map(params![n as i64], |row| {
-                let kind_str: String = row.get(1)?;
-                let kind = ActionKind::parse_kind(&kind_str).unwrap_or_else(|| {
-                    tracing::warn!("unknown action kind in DB: {}", kind_str);
-                    ActionKind::UserInput
-                });
-                Ok(RecentAction {
-                    ts: row.get(0)?,
-                    kind,
-                    summary: row.get(2)?,
-                    detail_json: row.get(3)?,
+            .context("prepare load_active_conversation")?;
+        let rows: Vec<ConversationMessage> = stmt
+            .query_map([], |row| {
+                Ok(ConversationMessage {
+                    id: row.get(0)?,
+                    ts: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    tool_call_id: row.get(4)?,
+                    name: row.get(5)?,
+                    tool_calls_json: row.get(6)?,
+                    insert_source: row.get(7)?,
                 })
             })
-            .context("query last_actions")?
+            .context("query load_active_conversation")?
             .collect::<Result<Vec<_>, _>>()
-            .context("collect last_actions")?;
-        rows.reverse();
+            .context("collect load_active_conversation")?;
         Ok(rows)
+    }
+
+    pub fn mark_conversation_cleared(
+        &self,
+        ts: &str,
+        source: ClearSource,
+    ) -> anyhow::Result<usize> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let n = conn
+            .execute(
+                "UPDATE conversation_messages \
+                 SET cleared_at = ?1, cleared_source = ?2 \
+                 WHERE cleared_at IS NULL",
+                params![ts, source.as_str()],
+            )
+            .context("mark_conversation_cleared")?;
+        Ok(n)
+    }
+
+    pub fn mark_messages_cleared_by_ids(
+        &self,
+        ids: &[i64],
+        ts: &str,
+        source: ClearSource,
+    ) -> anyhow::Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE conversation_messages SET cleared_at = ?, cleared_source = ? \
+             WHERE id IN ({}) AND cleared_at IS NULL",
+            placeholders
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(ids.len() + 2);
+        params_vec.push(Box::new(ts.to_string()));
+        params_vec.push(Box::new(source.as_str().to_string()));
+        for id in ids {
+            params_vec.push(Box::new(*id));
+        }
+        let refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let n = conn
+            .execute(&sql, refs.as_slice())
+            .context("mark_messages_cleared_by_ids")?;
+        Ok(n)
+    }
+
+    // -----------------------------------------------------------------------
+    // Long-term facts (v0.2.6)
+    // -----------------------------------------------------------------------
+
+    pub fn current_fact_generation(&self) -> anyhow::Result<i64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let gen: Option<i64> = conn
+            .query_row("SELECT MAX(generation) FROM long_term_facts", [], |r| {
+                r.get(0)
+            })
+            .ok();
+        Ok(gen.unwrap_or(0))
+    }
+
+    pub fn load_active_facts(&self) -> anyhow::Result<Vec<Fact>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, generation, ts, category, claim, insert_source \
+                 FROM long_term_facts \
+                 WHERE cleared_at IS NULL \
+                   AND generation = (SELECT COALESCE(MAX(generation), 0) FROM long_term_facts) \
+                 ORDER BY id ASC",
+            )
+            .context("prepare load_active_facts")?;
+        let rows: Vec<Fact> = stmt
+            .query_map([], |row| {
+                Ok(Fact {
+                    id: row.get(0)?,
+                    generation: row.get(1)?,
+                    ts: row.get(2)?,
+                    category: row.get(3)?,
+                    claim: row.get(4)?,
+                    insert_source: row.get(5)?,
+                })
+            })
+            .context("query load_active_facts")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("collect load_active_facts")?;
+        Ok(rows)
+    }
+
+    /// Atomically replace the active facts with a new generation. Returns the
+    /// new generation number.
+    pub fn replace_facts_generation(
+        &self,
+        ts: &str,
+        new_facts: &[(String, String)], // (category, claim)
+    ) -> anyhow::Result<i64> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let tx = conn
+            .transaction()
+            .context("begin replace_facts_generation")?;
+        let new_gen: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(generation), 0) + 1 FROM long_term_facts",
+                [],
+                |r| r.get(0),
+            )
+            .context("compute new generation")?;
+        for (category, claim) in new_facts {
+            tx.execute(
+                "INSERT INTO long_term_facts \
+                 (generation, ts, category, claim, insert_source) \
+                 VALUES (?1, ?2, ?3, ?4, 'compact')",
+                params![new_gen, ts, category, claim],
+            )
+            .context("insert fact")?;
+        }
+        tx.commit().context("commit replace_facts_generation")?;
+        Ok(new_gen)
+    }
+
+    pub fn add_manual_fact(&self, ts: &str, category: &str, claim: &str) -> anyhow::Result<i64> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let tx = conn.transaction().context("begin add_manual_fact")?;
+        let gen: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(generation), 0) FROM long_term_facts",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let target_gen = if gen == 0 { 1 } else { gen };
+        tx.execute(
+            "INSERT INTO long_term_facts \
+             (generation, ts, category, claim, insert_source) \
+             VALUES (?1, ?2, ?3, ?4, 'manual')",
+            params![target_gen, ts, category, claim],
+        )
+        .context("insert manual fact")?;
+        let id = tx.last_insert_rowid();
+        tx.commit().context("commit add_manual_fact")?;
+        Ok(id)
+    }
+
+    pub fn mark_facts_cleared(&self, ts: &str, source: ClearSource) -> anyhow::Result<usize> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let n = conn
+            .execute(
+                "UPDATE long_term_facts SET cleared_at = ?1, cleared_source = ?2 \
+                 WHERE cleared_at IS NULL",
+                params![ts, source.as_str()],
+            )
+            .context("mark_facts_cleared")?;
+        Ok(n)
+    }
+
+    pub fn mark_fact_cleared_by_id(
+        &self,
+        id: i64,
+        ts: &str,
+        source: ClearSource,
+    ) -> anyhow::Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let n = conn
+            .execute(
+                "UPDATE long_term_facts SET cleared_at = ?1, cleared_source = ?2 \
+                 WHERE id = ?3 AND cleared_at IS NULL",
+                params![ts, source.as_str(), id],
+            )
+            .context("mark_fact_cleared_by_id")?;
+        Ok(n > 0)
     }
 }
 
@@ -296,28 +591,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn open_and_reopen_preserves_data() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("memory.db");
-
-        {
-            let m = Memory::open(&path).unwrap();
-            m.write_init_audit(&make_audit()).unwrap();
-            m.append_action(&RecentAction {
-                ts: now(),
-                kind: ActionKind::UserInput,
-                summary: "hello".into(),
-                detail_json: None,
-            })
-            .unwrap();
+    fn make_msg(role: &str, content: &str) -> ConversationMessage {
+        ConversationMessage {
+            id: 0,
+            ts: now(),
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            name: None,
+            tool_calls_json: None,
+            insert_source: "turn".into(),
         }
-
-        let m2 = Memory::open(&path).unwrap();
-        assert!(m2.read_init_audit().unwrap().is_some());
-        let actions = m2.last_actions(10).unwrap();
-        assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].summary, "hello");
     }
 
     #[test]
@@ -375,93 +659,6 @@ mod tests {
         assert!(m.read_init_audit().unwrap().is_none());
     }
 
-    #[test]
-    fn append_and_last_actions_chronological() {
-        let m = Memory::open_in_memory().unwrap();
-        for i in 0..5u32 {
-            m.append_action(&RecentAction {
-                ts: now(),
-                kind: ActionKind::UserInput,
-                summary: format!("msg {}", i),
-                detail_json: None,
-            })
-            .unwrap();
-        }
-        let actions = m.last_actions(3).unwrap();
-        assert_eq!(actions.len(), 3);
-        assert_eq!(actions[0].summary, "msg 2");
-        assert_eq!(actions[1].summary, "msg 3");
-        assert_eq!(actions[2].summary, "msg 4");
-    }
-
-    #[test]
-    fn last_actions_n_caps_result() {
-        let m = Memory::open_in_memory().unwrap();
-        for _ in 0..10 {
-            m.append_action(&RecentAction {
-                ts: now(),
-                kind: ActionKind::Tool,
-                summary: "x".into(),
-                detail_json: None,
-            })
-            .unwrap();
-        }
-        assert_eq!(m.last_actions(4).unwrap().len(), 4);
-        assert_eq!(m.last_actions(0).unwrap().len(), 0);
-    }
-
-    #[test]
-    fn pruning_caps_at_1000() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("memory.db");
-
-        {
-            let m = Memory::open(&path).unwrap();
-            for _ in 0..1050u32 {
-                m.append_action(&RecentAction {
-                    ts: now(),
-                    kind: ActionKind::UserInput,
-                    summary: "x".into(),
-                    detail_json: None,
-                })
-                .unwrap();
-            }
-        }
-
-        let m2 = Memory::open(&path).unwrap();
-        let count = m2.last_actions(2000).unwrap().len();
-        assert_eq!(count, 1000);
-    }
-
-    #[test]
-    fn action_kind_round_trip() {
-        for k in [
-            ActionKind::UserInput,
-            ActionKind::Assistant,
-            ActionKind::Tool,
-        ] {
-            let s = k.as_str();
-            assert_eq!(ActionKind::parse_kind(s), Some(k));
-        }
-    }
-
-    #[test]
-    fn summary_truncation_multibyte() {
-        let m = Memory::open_in_memory().unwrap();
-        let long_summary = "€".repeat(100);
-        assert!(long_summary.len() > 200);
-        m.append_action(&RecentAction {
-            ts: now(),
-            kind: ActionKind::UserInput,
-            summary: long_summary,
-            detail_json: None,
-        })
-        .unwrap();
-        let actions = m.last_actions(1).unwrap();
-        assert!(actions[0].summary.len() <= 200);
-        assert!(std::str::from_utf8(actions[0].summary.as_bytes()).is_ok());
-    }
-
     #[cfg(unix)]
     #[test]
     fn file_permissions_0600_dir_0700() {
@@ -474,5 +671,130 @@ mod tests {
         let file_meta = std::fs::metadata(&path).unwrap();
         assert_eq!(dir_meta.mode() & 0o777, 0o700, "dir should be 0700");
         assert_eq!(file_meta.mode() & 0o777, 0o600, "file should be 0600");
+    }
+
+    // -----------------------------------------------------------------------
+    // v0.2.6 new tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn append_and_load_active_conversation_roundtrip() {
+        let m = Memory::open_in_memory().unwrap();
+        m.append_message(&make_msg("user", "hello")).unwrap();
+        m.append_message(&make_msg("assistant", "hi")).unwrap();
+        let msgs = m.load_active_conversation().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "hello");
+    }
+
+    #[test]
+    fn mark_conversation_cleared_filters_subsequent_loads() {
+        let m = Memory::open_in_memory().unwrap();
+        m.append_message(&make_msg("user", "x")).unwrap();
+        let cleared = m
+            .mark_conversation_cleared(&now(), ClearSource::ClearContext)
+            .unwrap();
+        assert_eq!(cleared, 1);
+        assert!(m.load_active_conversation().unwrap().is_empty());
+        m.append_message(&make_msg("user", "y")).unwrap();
+        assert_eq!(m.load_active_conversation().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn replace_facts_generation_bumps_and_loads_only_latest() {
+        let m = Memory::open_in_memory().unwrap();
+        let g1 = m
+            .replace_facts_generation(
+                &now(),
+                &[
+                    ("identity".into(), "user is alice".into()),
+                    ("preference".into(), "likes terse output".into()),
+                ],
+            )
+            .unwrap();
+        assert_eq!(g1, 1);
+        let facts = m.load_active_facts().unwrap();
+        assert_eq!(facts.len(), 2);
+
+        let g2 = m
+            .replace_facts_generation(
+                &now(),
+                &[("identity".into(), "user is alice (verified)".into())],
+            )
+            .unwrap();
+        assert_eq!(g2, 2);
+        let facts = m.load_active_facts().unwrap();
+        assert_eq!(facts.len(), 1);
+        assert!(facts[0].claim.contains("verified"));
+    }
+
+    #[test]
+    fn mark_fact_cleared_by_id_targets_single_row() {
+        let m = Memory::open_in_memory().unwrap();
+        m.replace_facts_generation(
+            &now(),
+            &[
+                ("identity".into(), "claim 1".into()),
+                ("identity".into(), "claim 2".into()),
+            ],
+        )
+        .unwrap();
+        let facts = m.load_active_facts().unwrap();
+        assert_eq!(facts.len(), 2);
+        let target = facts[0].id;
+        let ok = m
+            .mark_fact_cleared_by_id(target, &now(), ClearSource::MemoryForget)
+            .unwrap();
+        assert!(ok);
+        let after = m.load_active_facts().unwrap();
+        assert_eq!(after.len(), 1);
+        assert_ne!(after[0].id, target);
+    }
+
+    #[test]
+    fn add_manual_fact_works_on_empty_db() {
+        let m = Memory::open_in_memory().unwrap();
+        let id = m
+            .add_manual_fact(&now(), "preference", "manual claim")
+            .unwrap();
+        assert!(id > 0);
+        let facts = m.load_active_facts().unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].insert_source, "manual");
+    }
+
+    #[test]
+    fn schema_v1_to_v2_preserves_init_audit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("memory.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+                 CREATE TABLE init_audit (
+                    id INTEGER PRIMARY KEY CHECK (id=1),
+                    written_at TEXT NOT NULL, host TEXT NOT NULL, os TEXT NOT NULL,
+                    kernel TEXT NOT NULL, user TEXT NOT NULL, home TEXT NOT NULL,
+                    shell TEXT, summary_md TEXT NOT NULL
+                 );
+                 CREATE TABLE recent_actions (id INTEGER PRIMARY KEY, ts TEXT, kind TEXT, summary TEXT, detail_json TEXT);
+                 INSERT INTO schema_version (version) VALUES (1);
+                 INSERT INTO init_audit VALUES (1, '2026-01-01T00:00:00.000Z', 'h', 'o', 'k', 'u', '/h', NULL, 'old');",
+            )
+            .unwrap();
+        }
+        let m = Memory::open(&path).unwrap();
+        let audit = m.read_init_audit().unwrap().unwrap();
+        assert_eq!(audit.summary_md, "old");
+        let conn = Connection::open(&path).unwrap();
+        let exists: Option<String> = conn
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='recent_actions'",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        assert!(exists.is_none(), "recent_actions should be dropped");
     }
 }

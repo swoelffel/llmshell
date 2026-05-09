@@ -1,3 +1,5 @@
+// TODO task 7: remove allow(deprecated) once ActionKind/RecentAction/append_action are removed.
+#![allow(deprecated)]
 use crate::compactor;
 use crate::config::CompactConfig;
 use crate::context::{ContextBuilder, SystemPromptSource};
