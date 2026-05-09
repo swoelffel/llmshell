@@ -12,6 +12,22 @@ pub enum RiskLevel {
     Unknown,
 }
 
+impl RiskLevel {
+    /// Numeric severity. Higher = riskier. Used to compare model claims to
+    /// classifier output (upgrade-only).
+    pub fn severity(self) -> u8 {
+        match self {
+            RiskLevel::ReadOnly => 0,
+            RiskLevel::LowRisk => 1,
+            RiskLevel::Network => 2,
+            RiskLevel::Write => 3,
+            RiskLevel::Unknown => 4,
+            RiskLevel::Destructive => 5,
+            RiskLevel::Privileged => 6,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyFlag {

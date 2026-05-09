@@ -120,6 +120,26 @@ impl Pipeline {
                 }
             }
         }
+        // Apply LLM-claimed risk as upgrade-only. The model can RAISE the
+        // risk level above the deterministic verdict but never lower it.
+        if enriched.tool_name == "run_process" {
+            if let Some(claimed_str) = enriched.args.get("claimed_risk").and_then(|v| v.as_str()) {
+                if let Some(claimed) = llmsh_policy::safe_commands::parse_claimed_risk(claimed_str)
+                {
+                    use llmsh_policy::types::PolicyFlag;
+                    if claimed.severity() > enriched.declared_risk.severity() {
+                        enriched.declared_risk = claimed;
+                        if !enriched.flags.contains(&PolicyFlag::ModelClaimedRisk) {
+                            enriched.flags.push(PolicyFlag::ModelClaimedRisk);
+                        }
+                    } else if claimed.severity() < enriched.declared_risk.severity()
+                        && !enriched.flags.contains(&PolicyFlag::ModelDisagreesOnRisk)
+                    {
+                        enriched.flags.push(PolicyFlag::ModelDisagreesOnRisk);
+                    }
+                }
+            }
+        }
         let decision = self.policy.evaluate(&enriched, ctx);
         Ok(CheckedStep {
             call: enriched,
@@ -233,6 +253,40 @@ mod classifier_tests {
             &[],
         );
         assert_eq!(out.plan.steps[0].call.declared_risk, RiskLevel::Unknown);
+    }
+
+    #[test]
+    fn claimed_destructive_upgrades_classifier_read_only() {
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"ls",
+                "intent":"list before deleting",
+                "claimed_risk":"destructive"
+            })),
+            &ctx(),
+            &[],
+        );
+        let step = &out.plan.steps[0];
+        assert_eq!(step.call.declared_risk, RiskLevel::Destructive);
+        assert!(step.call.flags.contains(&PolicyFlag::ModelClaimedRisk));
+    }
+
+    #[test]
+    fn claimed_read_only_does_not_downgrade_unknown() {
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"rm","args":["-rf","/tmp/x"],
+                "intent":"clean build artefacts",
+                "claimed_risk":"read_only"
+            })),
+            &ctx(),
+            &[],
+        );
+        let step = &out.plan.steps[0];
+        assert_eq!(step.call.declared_risk, RiskLevel::Unknown);
+        assert!(step.call.flags.contains(&PolicyFlag::ModelDisagreesOnRisk));
     }
 
     #[test]
