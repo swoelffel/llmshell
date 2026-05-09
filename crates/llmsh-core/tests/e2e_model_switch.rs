@@ -183,6 +183,7 @@ async fn rendered_system_prompt_reflects_model_switch() {
         registry: registry.clone(),
         policy,
         home: None,
+        auto_classify_run_process: false,
     };
     let writer = AuditWriter::open(audit_dir.path(), "test-prompt-update").unwrap();
 
