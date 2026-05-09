@@ -221,11 +221,7 @@ mod classifier_tests {
     #[test]
     fn ls_stays_unknown_when_disabled() {
         let p = make_pipeline(false);
-        let out = p.check(
-            model_plan(serde_json::json!({"program":"ls"})),
-            &ctx(),
-            &[],
-        );
+        let out = p.check(model_plan(serde_json::json!({"program":"ls"})), &ctx(), &[]);
         assert_eq!(out.plan.steps[0].call.declared_risk, RiskLevel::Unknown);
     }
 
