@@ -39,7 +39,7 @@ export OPENAI_API_KEY=sk-...
 ./target/release/llmsh                # or: cargo run -p llmsh-cli
 ```
 
-Useful env vars: `LLMSH_DEBUG=1` (tracing to stderr), `LLMSH_NO_AUDIT=1` (disable audit — tests rely on this off), `LLMSH_CONFIG`, `LLMSH_MODEL`. First launch writes `~/.config/llmsh/config.toml`; a `.llmsh.toml` in the cwd merges on top. Audit log: `~/.local/share/llmsh/audit/`.
+Useful env vars: `LLMSH_DEBUG=1` (tracing to stderr), `LLMSH_VERBOSE=1|2` (per-turn stats; CLI `-v` / `-vv` are equivalents), `LLMSH_NO_AUDIT=1` (disable audit — tests rely on this off), `LLMSH_NO_AUTOINIT=1` (skip the bootstrap `/init`), `LLMSH_CONFIG`, `LLMSH_MODEL`, `LLMSH_MEMORY_DB`. CLI flags: `-v` / `-vv`, `--config <path>`. First launch writes `~/.config/llmsh/config.toml`; a `.llmsh.toml` in the cwd merges on top. Audit log: `~/.llmsh/sessions/` (override via `audit.directory`).
 
 ## Architecture
 
@@ -47,15 +47,16 @@ Seven crates in [crates/](crates/), wired together by [llmsh-core](crates/llmsh-
 
 - **llmsh-llm** — `LlmProvider` trait, neutral message/tool-call types, `Capabilities`.
 - **llmsh-llm-openai** — OpenAI-compatible HTTP impl. Mapping in `mapping.rs` / `wire.rs`.
-- **llmsh-policy** — `PolicyEngine` returns `RiskAction` (`Allow` / `Confirm` / `Deny`). See [.claude/rules/policy-rules.md](.claude/rules/policy-rules.md).
-- **llmsh-tools** — `read_file`, `list_directory`, `run_process` behind a `Tool` trait + `ToolRegistry`.
+- **llmsh-policy** — `PolicyEngine` returns `RiskAction` (`Allow` / `Confirm` / `ConfirmStrong` / `Deny`). The "workspace boundary" enforcement was dropped in v0.2.7: `allowed_roots` from the user config is still surfaced via `PolicyContext` as a best-effort hint to the agent, but is no longer enforced — the host filesystem (scoped by the running user's rights) is the boundary. See [.claude/rules/policy-rules.md](.claude/rules/policy-rules.md).
+- **llmsh-tools** — `read_file`, `list_directory`, `run_process`, `glob` behind a `Tool` trait + `ToolRegistry`. `read_file` / `list_directory` / `run_process` expand `~` / `~/…` to `$HOME` (no shell, no glob expansion); use `glob` first when patterns are needed.
 - **llmsh-audit** — append-only JSONL with hash-chained `digest`, redactor, session ids, event taxonomy. See [.claude/rules/audit-invariants.md](.claude/rules/audit-invariants.md).
 - **llmsh-core** — integration hub:
   - `agent::AgentLoop` — bounded iterate-until-done loop (`AgentBounds`).
   - `pipeline::Pipeline` — schema enrichment + policy classification + sensitive-path checks.
-  - `executor::ToolExecutor` — per-tool timeout + `CancellationToken`.
-  - `confirm::ConfirmationGate` — trait used to prompt for `Confirm`-level actions.
+  - `executor::ToolExecutor` — per-tool timeout + `CancellationToken`. PWD is shared across REPL/policy/tools via `cwd::SharedCwd = Arc<RwLock<PathBuf>>`; `!cd /dir` and `run_process(cd, ["…"])` mutate it (and emit a `CwdChanged` audit event).
+  - `confirm::ConfirmationGate` — trait used to prompt for `Confirm` and `ConfirmStrong` actions (the latter requires typing a generated phrase verbatim).
   - `repl::Repl` — reedline-backed input + slash commands.
+  - `memory::Memory::cleanup_orphan_tool_calls` — one-shot startup pass that drops any persisted assistant `tool_calls` left without matching tool responses (a legacy v0.2.6 DB would otherwise cause OpenAI to 400 on session reload).
   - `context.rs` — `SystemPromptBuilder` composes the per-turn system prompt as 5 ordered sections (persona, AGENTS.md, long-term memory, runtime context, recent activity). `SystemPromptSource` trait + `StaticSystemPrompt` / `MemorySystemPrompt` impls. **Stable→dynamic ordering is load-bearing for OpenAI's automatic prompt cache — don't reorder.**
   - `llm_redact.rs`, `raw_shell.rs` — redaction at the LLM boundary, raw-shell risk scan.
 - **llmsh-cli** — `clap`/`tokio` entry point.

@@ -57,7 +57,7 @@ Context & memory:
 
 Filesystem:
   /pwd                Print the current working directory.
-  /cd <path>          Change directory (must stay inside allowed roots).
+  /cd <path>          Change directory.
 
 History:
   /history            Print the last 20 inputs of this session.

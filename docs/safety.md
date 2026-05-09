@@ -14,7 +14,7 @@ LLMShell is built around a single principle: **the LLM proposes, the runtime dec
 - Execute a tool directly. Every call goes through the pipeline.
 - Bypass policy classification.
 - Bypass the confirmation gate for `Confirm`-level actions.
-- Reach a sensitive path that the policy denies.
+- Reach a sensitive path without strong confirmation (or without an outright denial if the user has configured one).
 - Write to the audit log. The runtime writes events; the LLM cannot author or mutate them.
 - Disable redaction.
 
@@ -22,9 +22,10 @@ LLMShell is built around a single principle: **the LLM proposes, the runtime dec
 
 LLMShell prefers **typed tools** over raw shell:
 
-- `read_file(path)` — read a file inside an allowed root.
+- `read_file(path)` — read a file. `~`/`~/…` is expanded to `$HOME`; globs are not.
 - `list_directory(path)` — list directory contents.
-- `run_process(program, args, …)` — execute a subprocess.
+- `run_process(program, args, …)` — execute a subprocess. Tilde expansion applies; the agent never gets a shell.
+- `glob(pattern, cwd?)` — read-only pattern expansion (capped at 1000 matches). Use it before `run_process` when globs are needed.
 
 Typed tools are introspectable: the policy engine sees structured arguments instead of a free-form command string. Raw shell is still available — prefix a line with `!` — but it is also classified, gated, and audited. There is no "off the record" execution path.
 
@@ -36,6 +37,7 @@ Every tool call (typed or raw) is classified by `PolicyEngine` into a `RiskActio
 |---|---|
 | `Allow` | Run the tool without prompting. |
 | `Confirm` | Prompt the user with the resolved arguments + policy flags. Run only on explicit yes. |
+| `ConfirmStrong` | Like `Confirm`, but the user must type a generated phrase verbatim. Anything else cancels. |
 | `Deny` | Block the tool call. Surface the reason to the user and to the audit log. |
 
 The classification uses phrase heuristics, the tool name, the resolved path (for filesystem tools), and configuration overrides from `~/.config/llmsh/config.toml`. Details: [policy.md](policy.md).
@@ -46,7 +48,7 @@ The model has no authority over the decision — its output cannot short-circuit
 
 `PolicyContext.sensitive_path_patterns` is checked **before** the tool runs. A read or write that resolves a path post-policy is a regression.
 
-Default sensitive patterns include SSH keys, credential files, OS keychain locations, and well-known system directories. The exact list is owned by the policy engine and configurable.
+Default sensitive patterns include SSH keys, credential files, OS keychain locations, and well-known system directories. The exact list is owned by the policy engine and configurable. Since v0.2.7, a hit on a sensitive path **escalates to strong confirmation** (a generated phrase the user must type verbatim) rather than auto-denying. Users who prefer the older "deny by default" stance can remap the relevant risk level to `deny` in `config.toml`.
 
 ## Confirmation prompts
 
@@ -96,7 +98,7 @@ OS-level sandboxing (bubblewrap / seccomp on Linux, sandbox-exec on macOS) is on
 LLMShell defends against:
 
 - **Confused-deputy tool calls** — the model is tricked into running something the user did not intend. Mitigated by typed tools + policy + confirmation.
-- **Sensitive-path exfiltration** — the model attempts to read SSH keys or credentials. Mitigated by sensitive-path denial.
+- **Sensitive-path exfiltration** — the model attempts to read SSH keys or credentials. Mitigated by strong confirmation (a phrase the user must type verbatim) on every sensitive-path hit, with the option to escalate to outright denial in `config.toml`.
 - **Audit tampering** — a malicious or buggy code path tries to skip an audit write. Mitigated by the hash chain and the requirement that *every* execution path emits an event on success, error, and cancellation.
 - **Secret re-injection** — secrets in tool output flow back to the model. Mitigated by `llm_redact` at the LLM boundary.
 

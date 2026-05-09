@@ -33,7 +33,12 @@ llmsh> read README.md and summarise it
 [assistant] LLMShell is a safety-first agentic shell …
 
 llmsh> read ~/.ssh/id_rsa
-[policy] denied: sensitive path
+[policy] confirm (strong): sensitive path
+  flags:   [SensitivePath]
+  reason:  matches built-in sensitive_paths pattern "~/.ssh/**"
+To confirm, type:  read id_rsa
+> ^C
+[policy] cancelled
 
 llmsh> !ls -la
 [raw shell] executed and audited
@@ -43,9 +48,9 @@ Most AI terminal tools focus on generating commands. LLMShell focuses on **contr
 
 ## Why LLMShell?
 
-- **Typed tools, not raw shell by default** — the agent calls `read_file`, `list_directory`, `run_process` with structured arguments, not free-form commands.
-- **Policy gate before every action** — each tool call is classified into `Allow` / `Confirm` / `Deny` before it runs.
-- **Sensitive path detection** — paths like `~/.ssh/`, credentials files, system directories are denied unless the user explicitly opts in.
+- **Typed tools, not raw shell by default** — the agent calls `read_file`, `list_directory`, `run_process`, `glob` with structured arguments, not free-form commands.
+- **Policy gate before every action** — each tool call is classified into `Allow` / `Confirm` / `ConfirmStrong` / `Deny` before it runs.
+- **Sensitive path detection** — paths like `~/.ssh/`, credentials files, and well-known system locations require **strong confirmation** (typing a generated phrase) by default. Users can map them to `Deny` in `config.toml`.
 - **Confirmation prompts on risky operations** — destructive or ambiguous calls surface tool args + policy flags before execution.
 - **Redacted, append-only audit log** — every step is recorded as hash-chained JSONL with secrets stripped at the LLM boundary.
 - **Explicit raw shell escape via `!`** — when you really need raw shell, prefix with `!`. It still goes through the audit log.
@@ -63,7 +68,7 @@ Most AI terminal tools focus on generating commands. LLMShell focuses on **contr
 
 - The LLM proposes; the runtime decides.
 - The `ToolRegistry` is the only source of executable tools.
-- Sensitive paths are denied by default.
+- Sensitive paths require strong confirmation by default (configurable to deny).
 - Risky actions require explicit confirmation.
 - The audit log is local, redacted, and append-only.
 - LLMShell is **not** a sandbox — it adds gates around tool calls, not OS-level isolation.
@@ -76,8 +81,8 @@ Seven Rust crates:
 
 - `llmsh-llm` — provider-neutral `LlmProvider` trait + neutral message/tool-call types.
 - `llmsh-llm-openai` — OpenAI-compatible HTTP provider.
-- `llmsh-policy` — `RiskAction` (`Allow` / `Confirm` / `Deny`) classifier.
-- `llmsh-tools` — `read_file`, `list_directory`, `run_process` behind a `Tool` trait.
+- `llmsh-policy` — `RiskAction` (`Allow` / `Confirm` / `ConfirmStrong` / `Deny`) classifier.
+- `llmsh-tools` — `read_file`, `list_directory`, `run_process`, `glob` behind a `Tool` trait.
 - `llmsh-audit` — append-only JSONL with hash-chained `digest`, redaction, event taxonomy.
 - `llmsh-core` — agent loop, pipeline (schema + policy + sensitive paths), executor, REPL, confirmation gate.
 - `llmsh-cli` — `clap`/`tokio` entry point, builds the `llmsh` binary.
@@ -133,7 +138,7 @@ Current capabilities:
 
 - OpenAI-compatible provider with runtime model switch (`/model`),
 - natural-language REPL with slash commands,
-- typed tools: `list_directory`, `read_file`, `run_process`,
+- typed tools: `list_directory`, `read_file`, `run_process`, `glob`,
 - policy engine with sensitive-path protection,
 - raw shell escape via `!`,
 - redacted JSONL audit log with hash chain,

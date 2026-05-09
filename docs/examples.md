@@ -16,27 +16,31 @@ the `llmsh` binary.
 
 llmsh> show me the audit event taxonomy
 [tool] read_file(path="crates/llmsh-audit/src/event.rs")
-[assistant] AuditEvent has 15 variants: SessionStarted, UserInput,
+[assistant] AuditEvent has 19 variants: SessionStarted, UserInput,
 LlmRequest, LlmResponse, ModelPlan, PolicyDecision, ConfirmationAsked,
 ToolExecutionStart, ToolExecutionEnd, RawShellExecution, AssistantMessage,
-Error, SessionEnded, MachineAuditPerformed, ModelChanged.
+Error, SessionEnded, MachineAuditPerformed, ModelChanged, ContextCompacted,
+ContextCleared, FactAdded, CwdChanged.
 ```
 
 Both calls were `read_only` against allowed roots — they ran without prompting.
 
-## Sensitive path is denied
+## Sensitive path requires strong confirmation
 
 ```text
 llmsh> read ~/.ssh/id_rsa
-[policy] denied: sensitive path
+[policy] confirm (strong): sensitive path
   tool:    read_file
   path:    /Users/me/.ssh/id_rsa
   flags:   [SensitivePath]
   reason:  matches built-in sensitive_paths pattern "~/.ssh/**"
-[assistant] I cannot read that file — it matches a sensitive path pattern.
+To confirm, type:  read id_rsa
+> read id_rsa
+[tool] read_file: 3243 bytes
+[assistant] (contents redacted in this example)
 ```
 
-The policy decision is recorded in the audit log as a `policy_decision` event with `effective_risk = read_only`, `action = deny`, and `flags = ["sensitive_path"]`. No `tool_execution_start` event is emitted because the tool never ran.
+The policy decision is recorded as a `policy_decision` event with `effective_risk = read_only`, `action = {kind: "require_confirmation", strong: true, phrase: "..."}`, and `flags = ["sensitive_path"]`. A `confirmation_asked` event records whether the phrase was typed correctly. Anything other than the exact phrase cancels the call and no `tool_execution_start` event is emitted. Users who prefer the older "deny by default" behaviour can map the relevant risk level to `deny` in `config.toml`.
 
 ## Confirmation prompt before a write
 
@@ -90,8 +94,29 @@ The `!` prefix routes the line through the raw-shell handler. It is still classi
 
 ```text
 llmsh> !cat ~/.ssh/id_rsa
-[raw shell] policy: deny (sensitive_path)
+[raw shell] policy: confirm (strong) (sensitive_path)
+To confirm, type:  read id_rsa
 ```
+
+## Globs and tilde
+
+Typed tools expand `~` and `~/…` to `$HOME` (no shell, no glob expansion). When the agent needs glob expansion, it calls `glob` first and then feeds the resolved absolute paths to `run_process`.
+
+```text
+llmsh> how big are my Library/Caches entries?
+[tool] glob(pattern="~/Library/Caches/*")
+  matches: 124, truncated: false
+[tool] run_process(program="du", args=["-sh",
+  "/Users/me/Library/Caches/com.apple.Safari",
+  "/Users/me/Library/Caches/Homebrew",
+  "/Users/me/Library/Caches/pip", … ])
+[policy] confirm: low_risk
+Run this command? [y/N]: y
+[tool] exit_code=0
+[assistant] Top entries: Homebrew 2.1G, com.apple.Safari 480M, pip 312M, …
+```
+
+`glob` is `read_only` (cap 1000 matches; `truncated: true` if exceeded). `run_process` never sees a shell metacharacter — the agent passes one absolute path per arg.
 
 ## Switching models mid-session
 
@@ -130,9 +155,9 @@ A `machine_audit_performed` event is recorded. Subsequent launches reuse the sto
 
 ```bash
 # Most recent session, filtered to policy decisions and confirmations.
-ls -t ~/.local/share/llmsh/audit/ | head -1 \
+ls -t ~/.llmsh/sessions/ | head -1 \
   | xargs -I{} jq -c 'select(.type == "policy_decision" or .type == "confirmation_asked")' \
-      ~/.local/share/llmsh/audit/{}
+      ~/.llmsh/sessions/{}
 ```
 
 Every example above produces a chain of events you can inspect, filter, or replay.

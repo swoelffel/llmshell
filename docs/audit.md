@@ -7,12 +7,12 @@ LLMShell records every step of every session in an append-only, hash-chained, re
 By default, audit files are written under:
 
 ```
-~/.local/share/llmsh/audit/
+~/.llmsh/sessions/
 ```
 
 One file per session, named after the session id, with the `.jsonl` extension. The directory is created with `0o700` permissions and audit files with `0o600`. Do not loosen those.
 
-Override with the `audit.dir` field in `~/.config/llmsh/config.toml`. Disable entirely with `LLMSH_NO_AUDIT=1` (not recommended outside tests).
+Override with the `audit.directory` field in `~/.config/llmsh/config.toml`. Disable entirely with `LLMSH_NO_AUDIT=1` (not recommended outside tests).
 
 ## Wire format
 
@@ -27,7 +27,7 @@ Each line is a single JSON object:
 - variant-specific fields.
 - `digest` — hash of this line plus the previous line's digest, forming the chain.
 
-Schema version is exposed as `SCHEMA_VERSION` in [`crates/llmsh-audit/src/event.rs`](../crates/llmsh-audit/src/event.rs). Current value: `2`.
+Schema version is exposed as `SCHEMA_VERSION` in [`crates/llmsh-audit/src/event.rs`](../crates/llmsh-audit/src/event.rs). Current value: `4`.
 
 ## Event taxonomy
 
@@ -47,7 +47,11 @@ Schema version is exposed as `SCHEMA_VERSION` in [`crates/llmsh-audit/src/event.
 | `Error` | A failure occurred along any path. |
 | `SessionEnded` | The REPL exits. |
 | `MachineAuditPerformed` | An automated audit of the host machine ran (e.g. on `/init`). |
-| `ModelChanged` | The active model changed via `/model`. |
+| `ModelChanged` | The active model changed via `/model`. Carries `from`, `to`. |
+| `ContextCompacted` | `/compact` ran. Carries `reason`, `strategy`, `messages_before`/`_after`, `bytes_before`/`_after`, optional `summary_digest`. |
+| `ContextCleared` | `/clear-context`, `/clear-memory`, `/clear-all`, or `/memory forget` ran. Carries `scope` (`context` / `memory` / `all` / `memory_forget`) and `rows_affected`. |
+| `FactAdded` | A long-term fact was persisted. Carries `fact_id`, `category`, `source` (`manual` / `compact` / `init`). |
+| `CwdChanged` | The working directory moved. Carries `from`, `to`, and `source` (`meta` / `raw_shell` / `tool`). |
 
 ## Hash chain
 
@@ -88,14 +92,14 @@ Each session file is plain JSONL. To inspect:
 
 ```bash
 # Most recent session, pretty-printed
-ls -t ~/.local/share/llmsh/audit/ | head -1 | xargs -I{} cat ~/.local/share/llmsh/audit/{} | jq .
+ls -t ~/.llmsh/sessions/ | head -1 | xargs -I{} cat ~/.llmsh/sessions/{} | jq .
 
 # All policy decisions across all sessions
-jq -c 'select(.type == "policy_decision")' ~/.local/share/llmsh/audit/*.jsonl
+jq -c 'select(.type == "policy_decision")' ~/.llmsh/sessions/*.jsonl
 ```
 
 To verify the chain (planned tooling on the [roadmap](../ROADMAP.md)):
 
 ```bash
-# llmsh audit verify ~/.local/share/llmsh/audit/<session>.jsonl
+# llmsh audit verify ~/.llmsh/sessions/<session>.jsonl
 ```
