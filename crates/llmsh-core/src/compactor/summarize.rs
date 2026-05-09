@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
-use llmsh_audit::digest::sha256_hex;
+use llmsh_audit::digest::{canonical_json_digest, sha256_hex};
+use llmsh_audit::event::{now_iso, AuditEvent};
+use llmsh_audit::redact::Redactor;
+use llmsh_audit::writer::AuditWriter;
 use llmsh_llm::provider::LlmProvider;
 use llmsh_llm::types::{LlmRequest, Message, MessageRole, ResponseFormat, ToolPolicyHint};
 use serde::Deserialize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Returns the index just before the `keep_last_user_turns`-th user message
 /// counted from the end. Messages at indices `< cut_index` are eligible for
@@ -55,6 +58,7 @@ curée de faits long-terme à mémoriser. Réponds en JSON strict avec les clés
 ///
 /// Fails (Err) if the LLM call fails or returns unparseable JSON — caller
 /// decides how to handle (typically silent fallback: keep prefix as-is).
+#[allow(clippy::too_many_arguments)]
 pub async fn summarize_and_extract(
     provider: Arc<dyn LlmProvider>,
     summary_model_label: Option<&str>,
@@ -62,6 +66,9 @@ pub async fn summarize_and_extract(
     current_facts: &[(String, String)], // (category, claim)
     summary_max_tokens: u32,
     max_facts: usize,
+    model_label_for_audit: &str,
+    audit: Option<&Mutex<AuditWriter>>,
+    redactor: Option<&Redactor>,
 ) -> Result<(Message, Vec<ExtractedFact>, String)> {
     let prefix_body = render_prefix_for_summary(prefix);
     let facts_body = render_current_facts(current_facts);
@@ -83,13 +90,82 @@ pub async fn summarize_and_extract(
         response_format: Some(ResponseFormat::JsonObject),
     };
     let _ = summary_model_label; // reserved: future hook to swap provider/model
-    let resp = provider
-        .complete(req)
-        .await
-        .context("compaction LLM call")?;
+
+    // Audit: request side. Distinguish compaction from agent traffic by
+    // suffixing the model label.
+    let audit_model = format!("{model_label_for_audit}#compact");
+    if let Some(audit) = audit {
+        let messages_digest = serde_json::to_value(&req.messages)
+            .map(|v| canonical_json_digest(&v))
+            .unwrap_or_default();
+        let context_bytes = serde_json::to_string(&req.messages)
+            .map(|s| s.len())
+            .unwrap_or(0);
+        if let Ok(mut w) = audit.lock() {
+            let _ = w.write(&AuditEvent::LlmRequest {
+                ts: now_iso(),
+                model: audit_model.clone(),
+                messages_digest,
+                tool_count: 0,
+                prompt_token_estimate: None,
+                context_bytes,
+                redaction_applied: redactor.is_some(),
+                redaction_hit_count: 0,
+            });
+        }
+    }
+
+    let resp_result = provider.complete(req).await;
+    let resp = match resp_result {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(audit) = audit {
+                if let Ok(mut w) = audit.lock() {
+                    let _ = w.write(&AuditEvent::LlmResponse {
+                        ts: now_iso(),
+                        model: audit_model.clone(),
+                        finish_reason: "error".into(),
+                        message_redacted: Some(format!("error: {e:#}")),
+                        tool_call_count: 0,
+                        tool_calls_digest: None,
+                        usage: None,
+                    });
+                }
+            }
+            return Err(e).context("compaction LLM call");
+        }
+    };
+
+    // Audit: response side (success path or empty body — both useful).
+    if let Some(audit) = audit {
+        let msg_red = resp.message.as_deref().map(|m| match redactor {
+            Some(r) => r.redact(m).0,
+            None => m.to_string(),
+        });
+        if let Ok(mut w) = audit.lock() {
+            let _ = w.write(&AuditEvent::LlmResponse {
+                ts: now_iso(),
+                model: audit_model.clone(),
+                finish_reason: format!("{:?}", resp.finish_reason).to_lowercase(),
+                message_redacted: msg_red,
+                tool_call_count: 0,
+                tool_calls_digest: None,
+                usage: resp
+                    .usage
+                    .as_ref()
+                    .and_then(|u| serde_json::to_value(u).ok()),
+            });
+        }
+    }
+
     let raw = resp.message.unwrap_or_default();
-    let parsed: CompactJson = serde_json::from_str(&raw)
-        .with_context(|| format!("compaction JSON parse failed; got: {raw}"))?;
+    if raw.trim().is_empty() {
+        anyhow::bail!("compaction LLM returned empty message body");
+    }
+    let parsed: CompactJson = serde_json::from_str(&raw).with_context(|| {
+        let preview: String = raw.chars().take(200).collect();
+        format!("compaction JSON parse failed; first 200 chars: {preview}")
+    })?;
 
     let facts: Vec<ExtractedFact> = parsed.facts.into_iter().take(max_facts).collect();
 
@@ -280,9 +356,19 @@ mod tests {
             }]),
         });
         let prefix = vec![user("hello"), assistant("hi")];
-        let (msg, facts, digest) = summarize_and_extract(provider, None, &prefix, &[], 500, 10)
-            .await
-            .unwrap();
+        let (msg, facts, digest) = summarize_and_extract(
+            provider,
+            None,
+            &prefix,
+            &[],
+            500,
+            10,
+            "test-model",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(msg.role, MessageRole::Assistant);
         assert!(msg.tool_calls.is_none());
         assert!(msg.tool_call_id.is_none());
@@ -326,9 +412,11 @@ mod tests {
         }
         let p: StdArc<dyn LlmProvider> = StdArc::new(Boom);
         let prefix = vec![user("hi"), assistant("ho")];
-        assert!(summarize_and_extract(p, None, &prefix, &[], 500, 10)
-            .await
-            .is_err());
+        assert!(
+            summarize_and_extract(p, None, &prefix, &[], 500, 10, "test-model", None, None)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -351,9 +439,19 @@ mod tests {
             }]),
         });
         let prefix = vec![user("q"), assistant("a")];
-        let (_msg, facts, _digest) = summarize_and_extract(provider, None, &prefix, &[], 200, 2)
-            .await
-            .unwrap();
+        let (_msg, facts, _digest) = summarize_and_extract(
+            provider,
+            None,
+            &prefix,
+            &[],
+            200,
+            2,
+            "test-model",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(facts.len(), 2);
     }
 
@@ -368,8 +466,18 @@ mod tests {
             }]),
         });
         let prefix = vec![user("q"), assistant("a")];
-        assert!(summarize_and_extract(provider, None, &prefix, &[], 200, 10)
-            .await
-            .is_err());
+        assert!(summarize_and_extract(
+            provider,
+            None,
+            &prefix,
+            &[],
+            200,
+            10,
+            "test-model",
+            None,
+            None
+        )
+        .await
+        .is_err());
     }
 }

@@ -5,7 +5,10 @@ use crate::input::{classify, InputKind};
 use crate::model_cmd::{handle_model_command, ModelCommandContext, ModelListCache};
 use crate::raw_shell::{resolve_shell, RiskScan};
 use llmsh_audit::event::{now_iso, AuditEvent};
-use reedline::{Reedline, Signal};
+use reedline::{
+    default_emacs_keybindings, ColumnarMenu, EditCommand, Emacs, KeyCode, KeyModifiers,
+    MenuBuilder, Reedline, ReedlineEvent, ReedlineMenu, Signal,
+};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,6 +43,12 @@ Input modes:
   <text>              Natural language — sent to the LLM agent.
   !<command>          Raw shell — runs <command> directly in the current shell.
   /<command>          Meta command — see below.
+
+Editing:
+  Shift+Enter / Alt+Enter   Insert a newline (multi-line prompts).
+                            Shift+Enter requires a terminal that distinguishes
+                            it from Enter; Alt+Enter works everywhere.
+  Tab                       Autocomplete /commands and their subcommands.
 
 Session:
   /help               Show this help.
@@ -78,7 +87,24 @@ Examples:
 
 impl Repl {
     pub async fn run(mut self) -> anyhow::Result<()> {
-        let mut line_editor = Reedline::create();
+        let mut keybindings = default_emacs_keybindings();
+        let newline = ReedlineEvent::Edit(vec![EditCommand::InsertNewline]);
+        keybindings.add_binding(KeyModifiers::SHIFT, KeyCode::Enter, newline.clone());
+        keybindings.add_binding(KeyModifiers::ALT, KeyCode::Enter, newline);
+        keybindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Tab,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::Menu("completion_menu".to_string()),
+                ReedlineEvent::MenuNext,
+            ]),
+        );
+        let edit_mode = Box::new(Emacs::new(keybindings));
+        let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
+        let mut line_editor = Reedline::create()
+            .with_edit_mode(edit_mode)
+            .with_completer(Box::new(crate::slash_complete::SlashCompleter::new()))
+            .with_menu(ReedlineMenu::EngineCompleter(completion_menu));
         loop {
             match line_editor.read_line(self.prompt.as_ref())? {
                 Signal::Success(line) => {
@@ -244,6 +270,8 @@ impl Repl {
                     last_input.max(u32::MAX / 2),
                     self.deps.provider.clone(),
                     self.deps.memory.clone(),
+                    Some(&self.deps.audit),
+                    Some(&self.deps.redactor),
                 )
                 .await;
                 println!(
@@ -254,21 +282,23 @@ impl Repl {
                     report.bytes_after,
                     report.strategy.as_str(),
                 );
-                let _ = self
-                    .deps
-                    .audit
-                    .lock()
-                    .unwrap()
-                    .write(&AuditEvent::ContextCompacted {
-                        ts: now_iso(),
-                        reason: report.reason.as_str().into(),
-                        strategy: report.strategy.as_str().into(),
-                        messages_before: report.messages_before,
-                        messages_after: report.messages_after,
-                        bytes_before: report.bytes_before,
-                        bytes_after: report.bytes_after,
-                        summary_digest: report.summary_digest,
-                    });
+                match &report.stage_b {
+                    crate::compactor::StageBOutcome::Succeeded => {
+                        println!("(summary stage: ok — facts updated)");
+                    }
+                    crate::compactor::StageBOutcome::Failed { error } => {
+                        eprintln!("(summary stage: failed — {error})");
+                    }
+                    crate::compactor::StageBOutcome::Skipped { reason } => {
+                        eprintln!(
+                            "(summary stage: skipped — {reason}; need more user turns to summarize)"
+                        );
+                    }
+                    crate::compactor::StageBOutcome::NotAttempted => {
+                        // Manual /compact always attempts stage B, so this is
+                        // unreachable for the manual path. Keep silent.
+                    }
+                }
             }
             "memory" => self.handle_memory_subcommand(args).await,
             other => eprintln!("unknown meta command: /{}", other),

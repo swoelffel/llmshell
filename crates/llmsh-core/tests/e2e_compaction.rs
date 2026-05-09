@@ -215,6 +215,8 @@ async fn manual_compact_runs_truncate_only_on_short_convo() {
         u32::MAX / 2,
         deps.provider.clone(),
         deps.memory.clone(),
+        None,
+        None,
     )
     .await;
     assert_eq!(

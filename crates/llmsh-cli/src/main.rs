@@ -111,6 +111,8 @@ async fn main() -> anyhow::Result<()> {
 
     // 3. Provider
     let (provider, shared_model, provider_prefix) = build_provider(&cfg)?;
+    let provider: Arc<dyn LlmProvider> =
+        Arc::new(llmsh_core::thinking::ThinkingProvider::new(provider));
 
     // 4. Tools
     let mut registry = ToolRegistry::new();

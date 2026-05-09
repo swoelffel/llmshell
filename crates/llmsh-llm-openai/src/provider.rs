@@ -60,7 +60,13 @@ impl LlmProvider for OpenAIProvider {
             .clone();
         let messages = to_wire_messages(req.system.as_deref(), &req.messages);
         let tools = to_wire_tools(&req.tools);
-        let tool_choice = tool_choice_for(req.tool_policy);
+        // OpenAI rejects `tool_choice` when `tools` is absent/empty
+        // (400 invalid_request_error). Strip it in that case.
+        let tool_choice = if tools.is_empty() {
+            None
+        } else {
+            tool_choice_for(req.tool_policy)
+        };
         let response_format = req.response_format.as_ref().map(|f| match f {
             llmsh_llm::types::ResponseFormat::Text => WireResponseFormat { kind: "text" },
             llmsh_llm::types::ResponseFormat::JsonObject => WireResponseFormat {

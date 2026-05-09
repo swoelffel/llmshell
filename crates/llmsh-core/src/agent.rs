@@ -134,7 +134,9 @@ impl AgentLoop {
                     && last_input > 0
                     && last_input >= threshold
                 {
-                    let report = compactor::compact(
+                    // Audit emission for ContextCompacted (incl. stage_b
+                    // outcome) is now the compactor's responsibility.
+                    let _report = compactor::compact(
                         &mut self.builder.messages,
                         &dep.compact_config,
                         &dep.memory_cfg,
@@ -143,22 +145,10 @@ impl AgentLoop {
                         last_input,
                         dep.provider.clone(),
                         dep.memory.clone(),
+                        Some(&dep.audit),
+                        Some(&dep.redactor),
                     )
                     .await;
-                    let _ = dep
-                        .audit
-                        .lock()
-                        .unwrap()
-                        .write(&AuditEvent::ContextCompacted {
-                            ts: now_iso(),
-                            reason: report.reason.as_str().into(),
-                            strategy: report.strategy.as_str().into(),
-                            messages_before: report.messages_before,
-                            messages_after: report.messages_after,
-                            bytes_before: report.bytes_before,
-                            bytes_after: report.bytes_after,
-                            summary_digest: report.summary_digest,
-                        });
                 }
             }
 

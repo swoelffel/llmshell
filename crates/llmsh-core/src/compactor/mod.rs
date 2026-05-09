@@ -39,6 +39,30 @@ impl CompactionStrategy {
 }
 
 #[derive(Debug, Clone)]
+pub enum StageBOutcome {
+    /// Stage B was not attempted (auto threshold not reached, or 0).
+    NotAttempted,
+    /// Stage B was eligible but `find_cut_index` returned None
+    /// (not enough user turns to summarize).
+    Skipped { reason: &'static str },
+    /// Summarize+extract returned a usable JSON.
+    Succeeded,
+    /// Summarize+extract failed (LLM error, JSON parse, etc.).
+    Failed { error: String },
+}
+
+impl StageBOutcome {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::NotAttempted => "not_attempted",
+            Self::Skipped { .. } => "skipped",
+            Self::Succeeded => "succeeded",
+            Self::Failed { .. } => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CompactionReport {
     pub reason: CompactionReason,
     pub strategy: CompactionStrategy,
@@ -47,6 +71,7 @@ pub struct CompactionReport {
     pub bytes_before: usize,
     pub bytes_after: usize,
     pub summary_digest: Option<String>,
+    pub stage_b: StageBOutcome,
 }
 
 /// Total bytes occupied by the `content` of every message in `messages`.
@@ -56,9 +81,12 @@ pub fn total_content_bytes(messages: &[Message]) -> usize {
 
 use crate::config::{CompactConfig, MemoryConfig};
 use crate::memory::{ClearSource, ConversationMessage, Memory};
+use llmsh_audit::event::{now_iso, AuditEvent};
+use llmsh_audit::redact::Redactor;
+use llmsh_audit::writer::AuditWriter;
 use llmsh_llm::context_window::context_window_for;
 use llmsh_llm::provider::LlmProvider;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Run the cascade (stage A then optionally B) on `messages` in place.
 ///
@@ -75,6 +103,8 @@ pub async fn compact(
     last_input_tokens: u32,
     provider: Arc<dyn LlmProvider>,
     memory: Arc<Memory>,
+    audit: Option<&Mutex<AuditWriter>>,
+    redactor: Option<&Redactor>,
 ) -> CompactionReport {
     let messages_before = messages.len();
     let bytes_before = total_content_bytes(messages);
@@ -94,6 +124,7 @@ pub async fn compact(
 
     let mut summarized = false;
     let mut digest: Option<String> = None;
+    let mut stage_b = StageBOutcome::NotAttempted;
     if should_summarize {
         if let Some(cut) = summarize::find_cut_index(messages, cfg.keep_last_user_turns) {
             let prefix: Vec<_> = messages[..cut].to_vec();
@@ -116,6 +147,9 @@ pub async fn compact(
                 &current_facts,
                 cfg.summary_max_tokens,
                 memory_cfg.max_facts,
+                model,
+                audit,
+                redactor,
             )
             .await
             {
@@ -184,14 +218,21 @@ pub async fn compact(
 
                     summarized = true;
                     digest = Some(d);
+                    stage_b = StageBOutcome::Succeeded;
                 }
                 Err(e) => {
+                    let err_msg = format!("{e:#}");
                     tracing::warn!(
-                        "compaction summarize+extract failed (silent fallback): {}",
-                        e
+                        "compaction summarize+extract failed (surfaced via audit): {}",
+                        err_msg
                     );
+                    stage_b = StageBOutcome::Failed { error: err_msg };
                 }
             }
+        } else {
+            stage_b = StageBOutcome::Skipped {
+                reason: "no_cut_point",
+            };
         }
     }
 
@@ -202,7 +243,7 @@ pub async fn compact(
         (false, false) => CompactionStrategy::Noop,
     };
 
-    CompactionReport {
+    let report = CompactionReport {
         reason,
         strategy,
         messages_before,
@@ -210,7 +251,34 @@ pub async fn compact(
         bytes_before,
         bytes_after: total_content_bytes(messages),
         summary_digest: digest,
+        stage_b,
+    };
+
+    // Single emission point for ContextCompacted — callers no longer write it.
+    if let Some(audit) = audit {
+        let (skip_reason, error) = match &report.stage_b {
+            StageBOutcome::Skipped { reason } => (Some(reason.to_string()), None),
+            StageBOutcome::Failed { error } => (None, Some(error.clone())),
+            _ => (None, None),
+        };
+        if let Ok(mut w) = audit.lock() {
+            let _ = w.write(&AuditEvent::ContextCompacted {
+                ts: now_iso(),
+                reason: report.reason.as_str().into(),
+                strategy: report.strategy.as_str().into(),
+                messages_before: report.messages_before,
+                messages_after: report.messages_after,
+                bytes_before: report.bytes_before,
+                bytes_after: report.bytes_after,
+                summary_digest: report.summary_digest.clone(),
+                stage_b_outcome: Some(report.stage_b.label().into()),
+                stage_b_skip_reason: skip_reason,
+                stage_b_error: error,
+            });
+        }
     }
+
+    report
 }
 
 #[cfg(test)]

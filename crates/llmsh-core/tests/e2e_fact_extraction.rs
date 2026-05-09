@@ -122,6 +122,8 @@ async fn first_compact_populates_facts_generation_1() {
         u32::MAX,
         provider,
         mem.clone(),
+        None,
+        None,
     )
     .await;
 
@@ -180,6 +182,8 @@ async fn second_compact_bumps_generation_and_old_rows_remain() {
             u32::MAX,
             provider,
             mem.clone(),
+            None,
+            None,
         )
         .await;
     }
@@ -214,6 +218,8 @@ async fn second_compact_bumps_generation_and_old_rows_remain() {
             u32::MAX,
             provider,
             mem.clone(),
+            None,
+            None,
         )
         .await;
 

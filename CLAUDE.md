@@ -2,16 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Superpowers output paths (override)
+## Project docs layout (override for superpowers)
 
-The superpowers plugin defaults to writing under `docs/superpowers/`. In this repo, **redirect every superpowers artefact to `ai-docs/superpowers/`** — `docs/` is part of the public-facing project documentation and must not be polluted by per-iteration plans/specs. `ai-docs/` is gitignored and dedicated to drafts.
+`docs/` is the public-facing documentation and must not be polluted by per-iteration briefs/plans/specs. All draft artefacts live under `ai-docs/` (gitignored).
+
+```
+ai-docs/
+├── ROADMAP.md             ← single source of truth for status
+├── current/               ← work-in-progress (briefs, plans, specs in flight)
+└── releases/
+    └── vX.Y.Z-<slug>/     ← brief.md / spec.md / plan.md, grouped per shipped release
+```
+
+**Conventions:**
+- New work (brainstorming, plans, briefs) lands flat in `ai-docs/current/`. Date-prefix optional; the file name should describe the topic.
+- When a release ships, move its artefacts into `ai-docs/releases/vX.Y.Z-<slug>/` and rename to `brief.md`, `spec.md`, `plan.md` (additional companion docs allowed, e.g. `brief-explained.md`).
+- "Active vs archived" is read from `ROADMAP.md`, not from directory names.
+
+**Superpowers skill overrides** (precedence over the skills' own defaults, per the using-superpowers contract):
 
 | Skill | Default path | Use here instead |
 |---|---|---|
-| `superpowers:writing-plans` | `docs/superpowers/plans/YYYY-MM-DD-*.md` | `ai-docs/superpowers/plans/YYYY-MM-DD-*.md` |
-| `superpowers:brainstorming` (design docs) | `docs/superpowers/specs/YYYY-MM-DD-*-design.md` | `ai-docs/superpowers/specs/YYYY-MM-DD-*-design.md` |
-
-This override takes precedence over the skill's own instructions, per the using-superpowers contract ("user instructions always take precedence").
+| `superpowers:writing-plans` | `docs/superpowers/plans/YYYY-MM-DD-*.md` | `ai-docs/current/YYYY-MM-DD-*-plan.md` |
+| `superpowers:brainstorming` (design docs) | `docs/superpowers/specs/YYYY-MM-DD-*-design.md` | `ai-docs/current/YYYY-MM-DD-*-design.md` |
 
 ## Project
 

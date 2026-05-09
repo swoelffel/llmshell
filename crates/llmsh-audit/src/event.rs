@@ -5,7 +5,8 @@ use serde_json::Value;
 // v2: added MachineAuditPerformed variant
 // v3: added ContextCompacted variant
 // v4: added ContextCleared and FactAdded variants
-pub const SCHEMA_VERSION: u32 = 4;
+// v5: added ContextCompacted.stage_b_outcome / stage_b_error
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -130,6 +131,18 @@ pub enum AuditEvent {
         bytes_before: usize,
         bytes_after: usize,
         summary_digest: Option<String>,
+        // Stage B observability (v5):
+        // - "not_attempted": stage B was disabled by config (auto_threshold_pct=0
+        //   and reason=auto, or threshold not reached).
+        // - "skipped":       stage B was eligible but find_cut_index returned None.
+        // - "succeeded":     summarize+extract returned a usable JSON.
+        // - "failed":        summarize+extract returned Err (LLM call or parse).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage_b_outcome: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage_b_skip_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage_b_error: Option<String>,
     },
     ContextCleared {
         ts: String,
