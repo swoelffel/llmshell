@@ -1,8 +1,6 @@
-// TODO task 7: remove allow(deprecated) once ActionKind/last_actions are removed.
-#![allow(deprecated)]
 use crate::executor::StepResult;
 use crate::llm_redact::LlmRedactor;
-use crate::memory::{ActionKind, Memory};
+use crate::memory::Memory;
 use crate::sysctx::RuntimeContext;
 use llmsh_llm::types::{Message, MessageRole, ToolCall};
 use std::path::PathBuf;
@@ -14,15 +12,14 @@ You are LLMShell, an agentic shell assistant installed on this machine. \
 Help the user accomplish tasks via natural language, calling typed runtime tools \
 (prefer them over run_process). \
 Never assume actions succeeded until tool results confirm them. \
-The Runtime context and Recent activity sections below describe the current machine \
-state and the latest actions in this session — use them to ground your answers.";
+The Runtime context section below describes the current machine state — use it to ground your answers.";
 
 pub struct SystemPromptBuilder {
     persona: &'static str,
     pub agents_md: Option<String>,
-    pub long_term_memory: Option<String>,
+    pub long_term_memory: Option<String>, // existing: init_audit summary
+    pub long_term_facts: Option<String>,  // NEW: curated facts
     pub runtime_context: Option<String>,
-    pub recent_activity: Option<String>,
 }
 
 impl SystemPromptBuilder {
@@ -31,8 +28,8 @@ impl SystemPromptBuilder {
             persona: DEFAULT_PERSONA,
             agents_md: None,
             long_term_memory: None,
+            long_term_facts: None,
             runtime_context: None,
-            recent_activity: None,
         }
     }
 
@@ -55,11 +52,11 @@ impl SystemPromptBuilder {
         if let Some(body) = non_empty(&self.long_term_memory) {
             push(&mut out, "=== Long-term memory ===", body);
         }
+        if let Some(body) = non_empty(&self.long_term_facts) {
+            push(&mut out, "=== Long-term facts ===", body);
+        }
         if let Some(body) = non_empty(&self.runtime_context) {
             push(&mut out, "=== Runtime context ===", body);
-        }
-        if let Some(body) = non_empty(&self.recent_activity) {
-            push(&mut out, "=== Recent activity ===", body);
         }
         out
     }
@@ -121,21 +118,14 @@ impl MemorySystemPrompt {
         }
     }
 
-    fn format_recent_activity(&self) -> Option<String> {
-        let actions = self.memory.last_actions(3).ok()?;
-        if actions.is_empty() {
+    fn format_long_term_facts(&self) -> Option<String> {
+        let facts = self.memory.load_active_facts().ok()?;
+        if facts.is_empty() {
             return None;
         }
-        let lines: Vec<String> = actions
+        let lines: Vec<String> = facts
             .iter()
-            .map(|a| match a.kind {
-                ActionKind::UserInput => format!("user: {}", a.summary),
-                ActionKind::Assistant => format!("assistant: {}", a.summary),
-                ActionKind::Tool => match a.summary.split_once(": ") {
-                    Some((name, rest)) => format!("tool[{}]: {}", name, rest),
-                    None => format!("tool[?]: {}", a.summary),
-                },
-            })
+            .map(|f| format!("- [{}] {}", f.category, f.claim))
             .collect();
         Some(lines.join("\n"))
     }
@@ -156,8 +146,8 @@ impl SystemPromptSource for MemorySystemPrompt {
             self.model.clone(),
             self.session_start,
         );
+        b.long_term_facts = self.format_long_term_facts();
         b.runtime_context = Some(rt.render());
-        b.recent_activity = self.format_recent_activity();
         b.build()
     }
 }
@@ -383,24 +373,26 @@ mod tests {
     }
 
     #[test]
-    fn all_five_sections_correct_order() {
+    fn all_sections_correct_order() {
         let b = SystemPromptBuilder {
             agents_md: Some("agents".into()),
             long_term_memory: Some("memory".into()),
+            long_term_facts: Some("facts".into()),
             runtime_context: Some("runtime".into()),
-            recent_activity: Some("activity".into()),
             ..SystemPromptBuilder::new()
         };
         let out = b.build();
         let agents_pos = out.find("=== AGENTS.md ===").unwrap();
         let memory_pos = out.find("=== Long-term memory ===").unwrap();
+        let facts_pos = out.find("=== Long-term facts ===").unwrap();
         let runtime_pos = out.find("=== Runtime context ===").unwrap();
-        let activity_pos = out.find("=== Recent activity ===").unwrap();
         assert!(agents_pos < memory_pos);
-        assert!(memory_pos < runtime_pos);
-        assert!(runtime_pos < activity_pos);
+        assert!(memory_pos < facts_pos);
+        assert!(facts_pos < runtime_pos);
         // Persona is first — no header before it
         assert!(out.starts_with(DEFAULT_PERSONA));
+        // No legacy section
+        assert!(!out.contains("=== Recent activity ==="));
     }
 
     #[test]
@@ -408,8 +400,8 @@ mod tests {
         let b = SystemPromptBuilder {
             agents_md: Some("".into()),
             long_term_memory: Some("".into()),
+            long_term_facts: Some("".into()),
             runtime_context: Some("".into()),
-            recent_activity: Some("".into()),
             ..SystemPromptBuilder::new()
         };
         let out = b.build();
@@ -450,53 +442,46 @@ mod tests {
         )
     }
 
-    // TODO task 7: restore these tests once format_recent_activity uses
-    // ConversationMessage instead of the deprecated append_action/last_actions stubs.
     #[test]
-    fn memory_system_prompt_tool_line_format() {
-        #[allow(deprecated)]
-        use crate::memory::{ActionKind, Memory, RecentAction};
-
+    fn memory_system_prompt_facts_section_renders() {
+        use crate::memory::Memory;
         let memory = Arc::new(Memory::open_in_memory().unwrap());
-        #[allow(deprecated)]
         memory
-            .append_action(&RecentAction {
-                ts: "2026-01-01T00:00:00.000Z".into(),
-                kind: ActionKind::Tool,
-                summary: "list_directory: success".into(),
-                detail_json: None,
-            })
+            .replace_facts_generation(
+                "2026-01-01T00:00:00.000Z",
+                &[
+                    ("identity".into(), "user is Stéphane".into()),
+                    ("preference".into(), "prefers French replies".into()),
+                ],
+            )
             .unwrap();
-
-        // append_action is a no-op stub until task 7; recent_activity is None.
         let prompt = make_test_prompt(memory);
-        assert!(prompt.format_recent_activity().is_none());
+        let body = prompt.format_long_term_facts().unwrap();
+        assert!(body.contains("[identity] user is Stéphane"));
+        assert!(body.contains("[preference] prefers French replies"));
     }
 
     #[test]
-    fn memory_system_prompt_mixed_kinds_formatting() {
-        #[allow(deprecated)]
-        use crate::memory::{ActionKind, Memory, RecentAction};
-
+    fn memory_system_prompt_no_facts_returns_none() {
         let memory = Arc::new(Memory::open_in_memory().unwrap());
-        #[allow(deprecated)]
-        for (kind, summary) in [
-            (ActionKind::UserInput, "hello"),
-            (ActionKind::Assistant, "hi there"),
-            (ActionKind::Tool, "read_file: failed"),
-        ] {
-            memory
-                .append_action(&RecentAction {
-                    ts: "2026-01-01T00:00:00.000Z".into(),
-                    kind,
-                    summary: summary.into(),
-                    detail_json: None,
-                })
-                .unwrap();
-        }
-
-        // append_action is a no-op stub until task 7; recent_activity is None.
         let prompt = make_test_prompt(memory);
-        assert!(prompt.format_recent_activity().is_none());
+        assert!(prompt.format_long_term_facts().is_none());
+    }
+
+    #[test]
+    fn system_prompt_includes_facts_section_when_present() {
+        use crate::memory::Memory;
+        let memory = Arc::new(Memory::open_in_memory().unwrap());
+        memory
+            .replace_facts_generation(
+                "2026-01-01T00:00:00.000Z",
+                &[("identity".into(), "claim".into())],
+            )
+            .unwrap();
+        let prompt = make_test_prompt(memory);
+        let out = prompt.current();
+        assert!(out.contains("=== Long-term facts ==="));
+        assert!(out.contains("[identity] claim"));
+        assert!(!out.contains("=== Recent activity ==="));
     }
 }
