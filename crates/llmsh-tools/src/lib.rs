@@ -1,5 +1,7 @@
 pub mod enrich;
+pub mod glob;
 pub mod list_directory;
+pub mod path_util;
 pub mod read_file;
 pub mod registry;
 pub mod run_process;

@@ -1,3 +1,4 @@
+use crate::path_util::expand_tilde;
 use crate::tool::{Tool, ToolCategory, ToolContext, ToolOutput};
 use async_trait::async_trait;
 use llmsh_policy::types::RiskLevel;
@@ -23,7 +24,10 @@ impl Tool for RunProcess {
         "run_process"
     }
     fn description(&self) -> &str {
-        "Run a program with arguments. No shell, no glob, no expansion."
+        "Run a program with arguments. No shell is invoked: `~` and `~/…` are \
+expanded against $HOME, but globs (`*`, `?`, `[]`) and environment variables \
+(`$VAR`, `${VAR}`) are NOT — they are passed literally. To use a glob, call \
+the `glob` tool first and pass the resolved paths as separate args."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -47,13 +51,39 @@ impl Tool for RunProcess {
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> anyhow::Result<ToolOutput> {
         let a: Args = serde_json::from_value(args)?;
-        let mut cmd = Command::new(&a.program);
-        cmd.args(&a.args);
+        // Tilde-expand the program path (only if it starts with `~`); otherwise
+        // hand the original string to `Command::new` so PATH lookup still works.
+        let program: std::borrow::Cow<'_, str> = if a.program.starts_with('~') {
+            std::borrow::Cow::Owned(
+                expand_tilde(&a.program, ctx.home.as_deref())
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        } else {
+            std::borrow::Cow::Borrowed(a.program.as_str())
+        };
+        let mut cmd = Command::new(program.as_ref());
+        // Tilde-expand each arg; everything else (globs, $VARs) stays literal.
+        let expanded_args: Vec<String> = a
+            .args
+            .iter()
+            .map(|raw| {
+                if raw.starts_with('~') {
+                    expand_tilde(raw, ctx.home.as_deref())
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    raw.clone()
+                }
+            })
+            .collect();
+        cmd.args(&expanded_args);
         if let Some(c) = &a.cwd {
-            let p = if std::path::Path::new(c).is_absolute() {
-                std::path::PathBuf::from(c)
+            let expanded = expand_tilde(c, ctx.home.as_deref());
+            let p = if expanded.is_absolute() {
+                expanded
             } else {
-                ctx.cwd.join(c)
+                ctx.cwd.join(&expanded)
             };
             cmd.current_dir(p);
         } else {
@@ -116,6 +146,7 @@ mod tests {
             env: HashMap::new(),
             max_output_bytes: 4096,
             cancel: CancellationToken::new(),
+            home: None,
         }
     }
 
@@ -127,6 +158,38 @@ mod tests {
             .await
             .unwrap();
         assert!(out.stdout.contains("hello $HOME")); // not expanded
+    }
+
+    #[tokio::test]
+    async fn tilde_cwd_is_expanded() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Pretend the tempdir is $HOME and ask `pwd` to print "~"
+        let mut c = ctx();
+        c.home = Some(tmp.path().to_path_buf());
+        let t = RunProcess;
+        let out = t
+            .execute(json!({"program":"pwd","cwd":"~"}), &c)
+            .await
+            .unwrap();
+        let printed = out.stdout.trim();
+        // Resolve any symlinks (macOS /var → /private/var) on both sides.
+        let want = std::fs::canonicalize(tmp.path()).unwrap();
+        let got = std::fs::canonicalize(printed).unwrap();
+        assert_eq!(got, want);
+    }
+
+    #[tokio::test]
+    async fn tilde_arg_is_expanded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut c = ctx();
+        c.home = Some(tmp.path().to_path_buf());
+        let t = RunProcess;
+        let out = t
+            .execute(json!({"program":"echo","args":["~/foo"]}), &c)
+            .await
+            .unwrap();
+        let want = format!("{}/foo", tmp.path().display());
+        assert_eq!(out.stdout.trim(), want);
     }
 
     #[tokio::test]

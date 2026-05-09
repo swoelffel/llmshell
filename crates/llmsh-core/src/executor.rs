@@ -28,6 +28,9 @@ pub struct ToolExecutor {
     pub max_output_bytes: usize,
     pub env: std::collections::HashMap<String, String>,
     pub cancel: CancellationToken,
+    /// Resolved `$HOME`, propagated to `ToolContext` so tools can perform
+    /// tilde expansion without reading the process environment.
+    pub home: Option<std::path::PathBuf>,
 }
 
 impl ToolExecutor {
@@ -72,6 +75,7 @@ impl ToolExecutor {
                 env: self.env.clone(),
                 max_output_bytes: self.max_output_bytes,
                 cancel: self.cancel.clone(),
+                home: self.home.clone(),
             };
             let start = Instant::now();
             let res = tool.execute(step.call.args.clone(), &ctx).await;

@@ -117,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
     registry.register(Arc::new(ListDirectory));
     registry.register(Arc::new(ReadFile));
     registry.register(Arc::new(RunProcess));
+    registry.register(Arc::new(llmsh_tools::glob::Glob));
     let registry = Arc::new(registry);
 
     // 5. Policy
@@ -158,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
         max_output_bytes: cfg.limits.max_audit_output_bytes,
         env: filtered_env(),
         cancel: cancel.clone(),
+        home: home.clone(),
     };
 
     // 6. Memory

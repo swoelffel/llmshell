@@ -95,6 +95,7 @@ async fn redaction_no_literal_secrets_in_audit() {
                 max_output_bytes: 65536,
                 env: Default::default(),
                 cancel: CancellationToken::new(),
+                home: None,
             },
             gate: Arc::new(AlwaysYesGate),
             audit: Mutex::new(writer),

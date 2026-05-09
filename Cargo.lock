@@ -567,6 +567,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
 name = "h2"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -978,7 +984,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llmsh-audit"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "chrono",
@@ -993,7 +999,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "clap",
@@ -1014,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-core"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1045,7 +1051,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1055,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm-openai"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1069,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-policy"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -1077,10 +1083,11 @@ dependencies = [
 
 [[package]]
 name = "llmsh-tools"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "async-trait",
+ "glob",
  "llmsh-llm",
  "llmsh-policy",
  "serde",

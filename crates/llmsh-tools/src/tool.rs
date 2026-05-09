@@ -32,6 +32,9 @@ pub struct ToolContext {
     pub env: HashMap<String, String>,
     pub max_output_bytes: usize,
     pub cancel: tokio_util::sync::CancellationToken,
+    /// Resolved `$HOME` for tilde expansion. Tools must not fall back to
+    /// `std::env::var("HOME")` — leaving this `None` means tildes stay literal.
+    pub home: Option<PathBuf>,
 }
 
 #[async_trait]

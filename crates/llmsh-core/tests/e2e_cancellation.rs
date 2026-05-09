@@ -87,6 +87,7 @@ async fn external_cancel_recorded_in_audit() {
             max_output_bytes: 4096,
             env: Default::default(),
             cancel: cancel.clone(),
+            home: None,
         },
         gate: Arc::new(AlwaysYesGate),
         audit: Mutex::new(writer),

@@ -1,3 +1,4 @@
+use crate::path_util::expand_tilde;
 use llmsh_llm::types::ToolCall;
 use llmsh_policy::context::{CheckedToolCall, ResolvedPath};
 use llmsh_policy::sensitive::matches_sensitive;
@@ -106,18 +107,6 @@ pub fn enrich(
         resolved_paths: paths,
         flags,
     }
-}
-
-fn expand_tilde(raw: &str, home: Option<&Path>) -> PathBuf {
-    if let Some(h) = home {
-        if let Some(rest) = raw.strip_prefix("~/") {
-            return h.join(rest);
-        }
-        if raw == "~" {
-            return h.to_path_buf();
-        }
-    }
-    PathBuf::from(raw)
 }
 
 #[cfg(test)]

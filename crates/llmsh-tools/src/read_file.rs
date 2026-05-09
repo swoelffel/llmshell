@@ -1,3 +1,4 @@
+use crate::path_util::expand_tilde;
 use crate::tool::{Tool, ToolCategory, ToolContext, ToolOutput};
 use async_trait::async_trait;
 use llmsh_policy::types::RiskLevel;
@@ -46,10 +47,11 @@ impl Tool for ReadFile {
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> anyhow::Result<ToolOutput> {
         let a: Args = serde_json::from_value(args)?;
-        let p = if std::path::Path::new(&a.path).is_absolute() {
-            std::path::PathBuf::from(&a.path)
+        let expanded = expand_tilde(&a.path, ctx.home.as_deref());
+        let p = if expanded.is_absolute() {
+            expanded
         } else {
-            ctx.cwd.join(&a.path)
+            ctx.cwd.join(&expanded)
         };
         let mut f = tokio::fs::File::open(&p).await?;
         let mut buf = Vec::new();
@@ -94,6 +96,7 @@ mod tests {
             env: HashMap::new(),
             max_output_bytes: 4096,
             cancel: CancellationToken::new(),
+            home: None,
         }
     }
 

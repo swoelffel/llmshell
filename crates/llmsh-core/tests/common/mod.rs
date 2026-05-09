@@ -142,6 +142,7 @@ pub fn build_test_deps_with_memory(
             max_output_bytes: 4096,
             env: Default::default(),
             cancel: CancellationToken::new(),
+            home: None,
         },
         gate,
         audit: Mutex::new(writer),

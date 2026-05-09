@@ -116,6 +116,7 @@ async fn session_stats_accumulate_across_turns() {
             max_output_bytes: 4096,
             env: Default::default(),
             cancel: CancellationToken::new(),
+            home: None,
         },
         gate: Arc::new(AlwaysYesGate),
         audit: Mutex::new(writer),

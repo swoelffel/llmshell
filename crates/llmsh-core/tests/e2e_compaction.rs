@@ -86,6 +86,7 @@ fn build_deps(
         max_output_bytes: 4096,
         env: Default::default(),
         cancel: CancellationToken::new(),
+        home: None,
     };
     let memory = Arc::new(Memory::open_in_memory().expect("memory"));
     let audit = std::sync::Mutex::new(AuditWriter::disabled());
