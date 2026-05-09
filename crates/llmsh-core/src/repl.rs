@@ -118,9 +118,7 @@ impl Repl {
     async fn handle_meta(&mut self, cmd: &str, args: &[String]) -> anyhow::Result<()> {
         match cmd {
             "help" => {
-                println!(
-                    "/help /exit /clear /compact /pwd /cd <path> /history /model [list|set <id>] /init"
-                );
+                println!("/help /exit /clear-context /clear-memory /clear-all /compact /memory [list|forget <id>|add [category:]<claim>] /pwd /cd <path> /history /model [list|set <id>] /init");
             }
             "init" => {
                 let audit = MachineAudit::capture_with_tooling().await;
@@ -189,12 +187,14 @@ impl Repl {
                 }
             }
             "clear" => {
-                let kept_capacity = self.builder.messages.len();
-                self.builder.messages.clear();
-                println!(
-                    "Conversation cleared ({} message(s) dropped).",
-                    kept_capacity
-                );
+                println!("(/clear is deprecated, use /clear-context — applying it now)");
+                self.do_clear_context().await;
+            }
+            "clear-context" => self.do_clear_context().await,
+            "clear-memory" => self.do_clear_memory().await,
+            "clear-all" => {
+                self.do_clear_context().await;
+                self.do_clear_memory().await;
             }
             "compact" => {
                 let model_now = self
@@ -245,9 +245,168 @@ impl Repl {
                         summary_digest: report.summary_digest,
                     });
             }
+            "memory" => self.handle_memory_subcommand(args).await,
             other => eprintln!("unknown meta command: /{}", other),
         }
         Ok(())
+    }
+
+    async fn do_clear_context(&mut self) {
+        let ts = now_iso();
+        let n = match self
+            .deps
+            .memory
+            .mark_conversation_cleared(&ts, crate::memory::ClearSource::ClearContext)
+        {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("clear-context: SQLite error: {e}");
+                0
+            }
+        };
+        self.builder.messages.clear();
+        println!("clear-context: cleared {n} message(s)");
+        let _ = self
+            .deps
+            .audit
+            .lock()
+            .unwrap()
+            .write(&AuditEvent::ContextCleared {
+                ts,
+                scope: "context".into(),
+                rows_affected: n,
+            });
+    }
+
+    async fn do_clear_memory(&mut self) {
+        let ts = now_iso();
+        let n = match self
+            .deps
+            .memory
+            .mark_facts_cleared(&ts, crate::memory::ClearSource::ClearMemory)
+        {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("clear-memory: SQLite error: {e}");
+                0
+            }
+        };
+        println!("clear-memory: dropped {n} long-term fact(s)");
+        let _ = self
+            .deps
+            .audit
+            .lock()
+            .unwrap()
+            .write(&AuditEvent::ContextCleared {
+                ts,
+                scope: "memory".into(),
+                rows_affected: n,
+            });
+    }
+
+    async fn handle_memory_subcommand(&mut self, args: &[String]) {
+        let sub = args.first().map(String::as_str).unwrap_or("list");
+        match sub {
+            "list" => {
+                let facts = match self.deps.memory.load_active_facts() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("memory list error: {e}");
+                        return;
+                    }
+                };
+                if facts.is_empty() {
+                    println!("(no long-term facts yet)");
+                    return;
+                }
+                for f in facts {
+                    println!(
+                        "[{}] #{} ({}): {}",
+                        f.category, f.id, f.insert_source, f.claim
+                    );
+                }
+            }
+            "forget" => {
+                let Some(id_str) = args.get(1) else {
+                    eprintln!("usage: /memory forget <id>");
+                    return;
+                };
+                let id: i64 = match id_str.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("invalid id: {id_str}");
+                        return;
+                    }
+                };
+                let ts = now_iso();
+                let removed = match self.deps.memory.mark_fact_cleared_by_id(
+                    id,
+                    &ts,
+                    crate::memory::ClearSource::MemoryForget,
+                ) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("memory forget error: {e}");
+                        return;
+                    }
+                };
+                if removed {
+                    println!("forgot fact #{id}");
+                    let _ = self
+                        .deps
+                        .audit
+                        .lock()
+                        .unwrap()
+                        .write(&AuditEvent::ContextCleared {
+                            ts,
+                            scope: "memory_forget".into(),
+                            rows_affected: 1,
+                        });
+                } else {
+                    println!("fact #{id} not found or already cleared");
+                }
+            }
+            "add" => {
+                let claim_parts: Vec<String> = args.iter().skip(1).cloned().collect();
+                if claim_parts.is_empty() {
+                    eprintln!("usage: /memory add <claim text>");
+                    return;
+                }
+                let raw = claim_parts.join(" ");
+                let (category, claim) = match raw.split_once(':') {
+                    Some((cat, rest))
+                        if matches!(
+                            cat.trim(),
+                            "identity" | "preference" | "project" | "todo" | "other"
+                        ) =>
+                    {
+                        (cat.trim().to_string(), rest.trim().to_string())
+                    }
+                    _ => ("other".to_string(), raw),
+                };
+                let ts = now_iso();
+                let id = match self.deps.memory.add_manual_fact(&ts, &category, &claim) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("memory add error: {e}");
+                        return;
+                    }
+                };
+                println!("added fact #{id} [{category}]: {claim}");
+                let _ = self
+                    .deps
+                    .audit
+                    .lock()
+                    .unwrap()
+                    .write(&AuditEvent::FactAdded {
+                        ts,
+                        fact_id: id,
+                        category,
+                        source: "manual".into(),
+                    });
+            }
+            other => eprintln!("unknown /memory subcommand: {other} (use list, forget, add)"),
+        }
     }
 
     async fn handle_raw_shell(&mut self, command: &str) -> anyhow::Result<()> {

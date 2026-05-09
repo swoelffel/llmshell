@@ -4,7 +4,8 @@ use serde_json::Value;
 // v1: initial schema
 // v2: added MachineAuditPerformed variant
 // v3: added ContextCompacted variant
-pub const SCHEMA_VERSION: u32 = 3;
+// v4: added ContextCleared and FactAdded variants
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -130,6 +131,17 @@ pub enum AuditEvent {
         bytes_after: usize,
         summary_digest: Option<String>,
     },
+    ContextCleared {
+        ts: String,
+        scope: String, // 'context'|'memory'|'all'|'memory_forget'
+        rows_affected: usize,
+    },
+    FactAdded {
+        ts: String,
+        fact_id: i64,
+        category: String,
+        source: String, // 'manual'|'compact'|'init'
+    },
 }
 
 pub fn now_iso() -> String {
@@ -152,5 +164,59 @@ mod tests {
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "machine_audit_performed");
         assert_eq!(json["tooling_count"], 7);
+    }
+
+    #[test]
+    fn context_cleared_roundtrip() {
+        let ev = AuditEvent::ContextCleared {
+            ts: "2026-05-09T00:00:00.000Z".into(),
+            scope: "context".into(),
+            rows_affected: 5,
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "context_cleared");
+        assert_eq!(json["scope"], "context");
+        assert_eq!(json["rows_affected"], 5);
+        let roundtrip: AuditEvent = serde_json::from_value(json).unwrap();
+        if let AuditEvent::ContextCleared {
+            scope,
+            rows_affected,
+            ..
+        } = roundtrip
+        {
+            assert_eq!(scope, "context");
+            assert_eq!(rows_affected, 5);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn fact_added_roundtrip() {
+        let ev = AuditEvent::FactAdded {
+            ts: "2026-05-09T00:00:00.000Z".into(),
+            fact_id: 42,
+            category: "preference".into(),
+            source: "manual".into(),
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "fact_added");
+        assert_eq!(json["fact_id"], 42);
+        assert_eq!(json["category"], "preference");
+        assert_eq!(json["source"], "manual");
+        let roundtrip: AuditEvent = serde_json::from_value(json).unwrap();
+        if let AuditEvent::FactAdded {
+            fact_id,
+            category,
+            source,
+            ..
+        } = roundtrip
+        {
+            assert_eq!(fact_id, 42);
+            assert_eq!(category, "preference");
+            assert_eq!(source, "manual");
+        } else {
+            panic!("wrong variant");
+        }
     }
 }
