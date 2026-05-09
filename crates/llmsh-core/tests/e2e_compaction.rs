@@ -5,7 +5,7 @@ use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
 use llmsh_core::compactor::validate::validate_no_orphans;
-use llmsh_core::config::CompactConfig;
+use llmsh_core::config::{CompactConfig, MemoryConfig};
 use llmsh_core::confirm::AlwaysYesGate;
 use llmsh_core::context::{ContextBuilder, StaticSystemPrompt};
 use llmsh_core::executor::ToolExecutor;
@@ -116,6 +116,7 @@ fn build_deps(
         verbose: 0,
         stats: Arc::new(RwLock::new(SessionStats::default())),
         compact_config,
+        memory_cfg: MemoryConfig::default(),
     })
 }
 

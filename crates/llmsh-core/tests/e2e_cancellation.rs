@@ -2,7 +2,7 @@ mod common;
 
 use async_trait::async_trait;
 use llmsh_core::agent::{AgentBounds, AgentDeps, AgentLoop};
-use llmsh_core::config::CompactConfig;
+use llmsh_core::config::{CompactConfig, MemoryConfig};
 use llmsh_core::confirm::AlwaysYesGate;
 use llmsh_core::context::{ContextBuilder, StaticSystemPrompt};
 use llmsh_core::executor::ToolExecutor;
@@ -97,6 +97,7 @@ async fn external_cancel_recorded_in_audit() {
             max_schema_repair_attempts: 2,
         },
         compact_config: CompactConfig::default(),
+        memory_cfg: MemoryConfig::default(),
         policy_ctx: PolicyContext {
             cwd: tmp.path().to_path_buf(),
             workspace_root: tmp.path().to_path_buf(),

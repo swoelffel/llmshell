@@ -14,6 +14,8 @@ pub struct Config {
     pub verbose: VerboseConfig,
     #[serde(default)]
     pub compact: CompactConfig,
+    #[serde(default)]
+    pub memory: MemoryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +154,34 @@ impl Default for CompactConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Hard cap on the long-term facts list. The compactor LLM is asked to
+    /// curate down to this number.
+    #[serde(default = "default_max_facts")]
+    pub max_facts: usize,
+    /// When true, the active conversation is reloaded from SQLite at startup.
+    /// Set to false to opt out (each launch starts fresh).
+    #[serde(default = "default_auto_load")]
+    pub auto_load_conversation: bool,
+}
+
+fn default_max_facts() -> usize {
+    100
+}
+fn default_auto_load() -> bool {
+    true
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            max_facts: default_max_facts(),
+            auto_load_conversation: default_auto_load(),
+        }
+    }
+}
+
 impl Config {
     pub fn defaults() -> Self {
         let mut providers = HashMap::new();
@@ -216,6 +246,7 @@ impl Config {
             },
             verbose: VerboseConfig::default(),
             compact: CompactConfig::default(),
+            memory: MemoryConfig::default(),
         }
     }
 

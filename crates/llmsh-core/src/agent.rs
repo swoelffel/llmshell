@@ -1,10 +1,8 @@
-// TODO task 7: remove allow(deprecated) once ActionKind/RecentAction/append_action are removed.
-#![allow(deprecated)]
 use crate::compactor;
-use crate::config::CompactConfig;
+use crate::config::{CompactConfig, MemoryConfig};
 use crate::context::{ContextBuilder, SystemPromptSource};
 use crate::executor::ToolExecutor;
-use crate::memory::{ActionKind, Memory, RecentAction};
+use crate::memory::{ConversationMessage, Memory};
 use crate::pipeline::Pipeline;
 use crate::plan::ModelPlan;
 use crate::session_stats::SessionStats;
@@ -13,7 +11,7 @@ use llmsh_audit::event::{now_iso, AuditEvent};
 use llmsh_audit::redact::Redactor;
 use llmsh_audit::writer::AuditWriter;
 use llmsh_llm::provider::LlmProvider;
-use llmsh_llm::types::{FinishReason, LlmRequest, ToolPolicyHint};
+use llmsh_llm::types::{FinishReason, LlmRequest, MessageRole, ToolPolicyHint};
 use llmsh_policy::context::PolicyContext;
 use std::sync::Arc;
 use std::time::Instant;
@@ -33,6 +31,7 @@ pub struct AgentDeps {
     pub redactor: Redactor,
     pub bounds: AgentBounds,
     pub compact_config: CompactConfig,
+    pub memory_cfg: MemoryConfig,
     pub policy_ctx: PolicyContext,
     pub sensitive_patterns: Vec<String>,
     pub model_label: std::sync::Arc<std::sync::RwLock<String>>,
@@ -42,6 +41,31 @@ pub struct AgentDeps {
     pub verbose: u8,
     /// Live session stats; shared with the status-line prompt.
     pub stats: Arc<std::sync::RwLock<SessionStats>>,
+}
+
+fn persist_from_msg(memory: &Memory, m: &llmsh_llm::types::Message, insert_source: &str) {
+    let tcs_json = m
+        .tool_calls
+        .as_ref()
+        .and_then(|tcs| serde_json::to_string(tcs).ok());
+    let role = match m.role {
+        MessageRole::User => "user",
+        MessageRole::Assistant => "assistant",
+        MessageRole::Tool => "tool",
+        MessageRole::System => "system",
+    };
+    if let Err(e) = memory.append_message(&ConversationMessage {
+        id: 0,
+        ts: now_iso(),
+        role: role.into(),
+        content: m.content.clone(),
+        tool_call_id: m.tool_call_id.clone(),
+        name: m.name.clone(),
+        tool_calls_json: tcs_json,
+        insert_source: insert_source.into(),
+    }) {
+        tracing::warn!("memory.append_message failed: {}", e);
+    }
 }
 
 pub struct AgentLoop {
@@ -62,17 +86,10 @@ impl AgentLoop {
             s.begin_user_turn();
         }
 
-        let user_input_red = dep.redactor.redact(user_input).0;
-        if let Err(e) = dep.memory.append_action(&RecentAction {
-            ts: now_iso(),
-            kind: ActionKind::UserInput,
-            summary: user_input_red,
-            detail_json: None,
-        }) {
-            tracing::warn!("memory append_action(user_input) failed: {}", e);
-        }
-
         self.builder.append_user(user_input);
+        if let Some(last) = self.builder.messages.last() {
+            persist_from_msg(&dep.memory, last, "turn");
+        }
 
         let mut iter = 0u32;
         let mut schema_attempts = 0u32;
@@ -211,17 +228,12 @@ impl AgentLoop {
                             ts: now_iso(),
                             text_redacted: red.clone(),
                         });
-                    if let Err(e) = dep.memory.append_action(&RecentAction {
-                        ts: now_iso(),
-                        kind: ActionKind::Assistant,
-                        summary: red.clone(),
-                        detail_json: None,
-                    }) {
-                        tracing::warn!("memory append_action(assistant) failed: {}", e);
-                    }
                     // Append the final assistant reply so the persisted builder
                     // retains the full conversation history for subsequent turns.
                     self.builder.append_assistant(&text);
+                    if let Some(last) = self.builder.messages.last() {
+                        persist_from_msg(&dep.memory, last, "turn");
+                    }
                     return Ok(LoopResult {
                         assistant_text: Some(text),
                         stopped_reason: "stop".into(),
@@ -291,6 +303,9 @@ impl AgentLoop {
                         assistant_text.as_deref(),
                         assistant_tool_calls.clone(),
                     );
+                    if let Some(last) = self.builder.messages.last() {
+                        persist_from_msg(&dep.memory, last, "turn");
+                    }
 
                     if !outcome.schema_errors.is_empty()
                         && schema_attempts < dep.bounds.max_schema_repair_attempts
@@ -472,24 +487,12 @@ impl AgentLoop {
                             }
                         }
                     }
-                    for r in &results {
-                        let status = format!("{:?}", r.status).to_lowercase();
-                        let summary = format!("{}: {}", r.tool_name, status);
-                        let detail = serde_json::json!({
-                            "tool": r.tool_name,
-                            "status": status,
-                            "error": r.error,
-                        });
-                        if let Err(e) = dep.memory.append_action(&RecentAction {
-                            ts: now_iso(),
-                            kind: ActionKind::Tool,
-                            summary,
-                            detail_json: Some(detail.to_string()),
-                        }) {
-                            tracing::warn!("memory append_action(tool) failed: {}", e);
-                        }
-                    }
+                    let n_results = results.len();
                     self.builder.append_tool_results(&results);
+                    let total = self.builder.messages.len();
+                    for m in self.builder.messages[total.saturating_sub(n_results)..].iter() {
+                        persist_from_msg(&dep.memory, m, "turn");
+                    }
                 }
             }
         }

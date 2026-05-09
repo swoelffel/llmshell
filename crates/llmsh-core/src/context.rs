@@ -167,6 +167,14 @@ impl ContextBuilder {
         }
     }
 
+    pub fn with_messages(max_llm_output_bytes: usize, messages: Vec<Message>) -> Self {
+        Self {
+            messages,
+            redactor: LlmRedactor::default(),
+            max_llm_output_bytes,
+        }
+    }
+
     pub fn append_user(&mut self, text: &str) {
         let (red, _) = self.redactor.redact(text);
         self.messages.push(Message {

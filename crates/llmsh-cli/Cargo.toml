@@ -19,7 +19,9 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 directories = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }

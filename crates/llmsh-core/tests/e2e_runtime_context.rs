@@ -49,7 +49,7 @@ async fn system_prompt_contains_runtime_context_block() {
         use llmsh_audit::redact::Redactor;
         use llmsh_audit::writer::AuditWriter;
         use llmsh_core::agent::{AgentBounds, AgentDeps};
-        use llmsh_core::config::CompactConfig;
+        use llmsh_core::config::{CompactConfig, MemoryConfig};
         use llmsh_core::executor::ToolExecutor;
         use llmsh_core::pipeline::Pipeline;
         use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine};
@@ -84,6 +84,7 @@ async fn system_prompt_contains_runtime_context_block() {
                 max_schema_repair_attempts: 2,
             },
             compact_config: CompactConfig::default(),
+            memory_cfg: MemoryConfig::default(),
             policy_ctx,
             sensitive_patterns: vec![],
             model_label: Arc::new(RwLock::new("mock:test-model".into())),

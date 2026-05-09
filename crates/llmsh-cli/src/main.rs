@@ -171,7 +171,44 @@ async fn main() -> anyhow::Result<()> {
         println!("(initial machine audit — type /init to refresh)");
     }
 
-    // 7. Agent deps
+    // 7. Load active conversation from SQLite (if enabled)
+    let initial_messages: Vec<llmsh_llm::types::Message> = if cfg.memory.auto_load_conversation {
+        match memory.load_active_conversation() {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|r| llmsh_llm::types::Message {
+                    role: match r.role.as_str() {
+                        "user" => llmsh_llm::types::MessageRole::User,
+                        "assistant" => llmsh_llm::types::MessageRole::Assistant,
+                        "tool" => llmsh_llm::types::MessageRole::Tool,
+                        "system" => llmsh_llm::types::MessageRole::System,
+                        _ => llmsh_llm::types::MessageRole::User,
+                    },
+                    content: r.content,
+                    tool_call_id: r.tool_call_id,
+                    name: r.name,
+                    tool_calls: r
+                        .tool_calls_json
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("load_active_conversation failed, starting empty: {}", e);
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let initial_count = initial_messages.len();
+    if initial_count > 0 {
+        println!(
+            "(reloaded {} messages from previous session)",
+            initial_count
+        );
+    }
+
+    // 8. Agent deps
     let agents_md = load_agents_md();
     let system_prompt = Arc::new(MemorySystemPrompt::new(
         agents_md,
@@ -196,6 +233,7 @@ async fn main() -> anyhow::Result<()> {
             max_schema_repair_attempts: cfg.limits.max_schema_repair_attempts,
         },
         compact_config: cfg.compact.clone(),
+        memory_cfg: cfg.memory.clone(),
         policy_ctx,
         sensitive_patterns: cfg.policy.sensitive_paths.patterns.clone(),
         model_label: shared_model.clone(),
@@ -223,7 +261,10 @@ async fn main() -> anyhow::Result<()> {
             allowed_roots,
             history_recent: vec![],
         },
-        builder: llmsh_core::context::ContextBuilder::new(cfg.limits.max_llm_output_bytes),
+        builder: llmsh_core::context::ContextBuilder::with_messages(
+            cfg.limits.max_llm_output_bytes,
+            initial_messages,
+        ),
         raw_shell: cfg.shell.raw_shell.clone(),
         risk_scan: RiskScan::default(),
         root_cancel: cancel,

@@ -67,15 +67,24 @@ async fn user_input_redacted_before_memory_storage() {
     agent.run("again").await.unwrap();
 
     let captured = provider.captured.lock().unwrap();
-    let system_turn2 = captured[1].system.as_deref().unwrap_or("");
-    assert!(
-        system_turn2.contains("=== Recent activity ==="),
-        "turn 2 should have recent activity"
+    // Turn 2 must have seen the user message from turn 1 in context (conversation history).
+    assert_eq!(
+        captured[1].messages.len(),
+        3, // user(t1) + assistant(t1) + user(t2)
+        "turn 2 should carry conversation history from turn 1"
     );
+    // The secret must not appear in the system prompt of turn 2.
+    let system_turn2 = captured[1].system.as_deref().unwrap_or("");
     assert!(
         !system_turn2.contains(FAKE_OPENAI_KEY),
         "turn 2 system prompt must NOT contain literal OpenAI key, got: {}",
         system_turn2
+    );
+    // The messages themselves should contain the redacted form, not the literal key.
+    let messages_json = serde_json::to_string(&captured[1].messages).unwrap_or_default();
+    assert!(
+        !messages_json.contains(FAKE_OPENAI_KEY),
+        "turn 2 messages must NOT contain literal OpenAI key after LLM redaction"
     );
 }
 

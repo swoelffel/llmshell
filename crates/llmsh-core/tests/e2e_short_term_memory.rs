@@ -21,8 +21,8 @@ fn policy_ctx_for(cwd: &std::path::Path) -> PolicyContext {
 }
 
 /// Turn 1: user says "hello", model returns "hi there".
-/// Turn 2: LlmRequest.system at turn 2 must contain "=== Recent activity ===" with
-/// the user input and assistant reply from turn 1.
+/// Turn 2: the LLM request must include the messages from turn 1 in its
+/// messages list so the model sees the full conversation context.
 #[tokio::test]
 async fn recent_activity_visible_in_second_turn() {
     let tmp = tempfile::tempdir().unwrap();
@@ -67,17 +67,26 @@ async fn recent_activity_visible_in_second_turn() {
     let captured = provider.captured.lock().unwrap();
     assert_eq!(captured.len(), 2, "expected 2 LLM requests");
 
-    let system_turn2 = captured[1].system.as_deref().unwrap_or("");
-    assert!(
-        system_turn2.contains("=== Recent activity ==="),
-        "turn 2 system prompt must contain Recent activity section"
+    // Turn 2 must carry [user(t1), assistant(t1), user(t2)] in its messages.
+    let msgs_turn2 = &captured[1].messages;
+    assert_eq!(
+        msgs_turn2.len(),
+        3,
+        "turn 2 must have 3 messages: user(t1), assistant(t1), user(t2)"
     );
     assert!(
-        system_turn2.contains("hello"),
-        "turn 2 must reference user input from turn 1"
+        msgs_turn2[0].content.contains("hello"),
+        "turn 2 messages[0] must be user input from turn 1; got: {}",
+        msgs_turn2[0].content
     );
     assert!(
-        system_turn2.contains("hi there"),
-        "turn 2 must reference assistant reply from turn 1"
+        msgs_turn2[1].content.contains("hi there"),
+        "turn 2 messages[1] must be assistant reply from turn 1; got: {}",
+        msgs_turn2[1].content
+    );
+    assert!(
+        msgs_turn2[2].content.contains("what did you just say"),
+        "turn 2 messages[2] must be user input from turn 2; got: {}",
+        msgs_turn2[2].content
     );
 }
