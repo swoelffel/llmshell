@@ -22,7 +22,11 @@ command. The engine only uses `claimed_risk` to RAISE the risk level above its \
 own deterministic estimate — declaring something destructive will not make it \
 allowed and declaring something read-only will not skip confirmation. Be honest. \
 Never assume actions succeeded until tool results confirm them. \
-The Runtime context section below describes the current machine state — use it to ground your answers.";
+The Runtime context section below describes the current machine state — use it to ground your answers. \
+When emitting `run_process`, prefer argv direct (program + args). Reserve \
+`bash -c \"…\"` for genuine shell needs (pipes, redirections, variable \
+expansion, compound logic). For glob patterns, call the `glob` tool first \
+and pass concrete paths.";
 
 pub struct SystemPromptBuilder {
     persona: &'static str,
