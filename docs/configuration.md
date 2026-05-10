@@ -3,21 +3,30 @@
 LLMShell merges three layers, each overriding the previous:
 
 1. Built-in defaults.
-2. User config: `~/.config/llmsh/config.toml`.
+2. User config (path depends on OS, see below).
 3. Project config: `.llmsh.toml` in the current working directory (optional).
 
 The first launch writes a default user config; missing files at lower layers are silently ignored.
 
 ## File locations
 
+User config and the memory database live in the OS-specific application support directory (resolved via the `directories` crate):
+
+| OS | User config | Memory store |
+|---|---|---|
+| Linux | `~/.config/llmsh/config.toml` (or `$XDG_CONFIG_HOME/llmsh/config.toml`) | `~/.local/share/llmsh/memory.db` |
+| macOS | `~/Library/Application Support/llmsh/config.toml` | `~/Library/Application Support/llmsh/memory.db` |
+| Windows | `%APPDATA%\llmsh\config.toml` | `%APPDATA%\llmsh\memory.db` |
+
+The rest of the paths are platform-uniform:
+
 | Path | Purpose |
 |---|---|
-| `~/.config/llmsh/config.toml` | User config (mode `0o600`). |
-| `~/.config/llmsh/AGENTS.md` | User-level agent instructions, loaded into the system prompt with a 2 KiB budget. |
+| `<config-dir>/AGENTS.md` | User-level agent instructions, loaded into the system prompt with a 2 KiB budget. The `<config-dir>` is the same directory as `config.toml` above. |
 | `.llmsh.toml` (cwd) | Project overrides. Merged on top of the user config. |
 | `~/.llmsh/sessions/` | Audit log directory (mode `0o700`). Override with `audit.directory` in `config.toml`. |
-| `~/.local/share/llmsh/memory.db` (Linux) | Long-term memory store (SQLite). |
-| `~/Library/Application Support/llmsh/memory.db` (macOS) | Long-term memory store (SQLite). |
+
+User config file mode: `0o600`. Throughout the rest of this document, `~/.config/llmsh/config.toml` is used as a shorthand — substitute the macOS or Windows path as appropriate for your system.
 
 Override the config path with `--config <path>` or `LLMSH_CONFIG`.
 
@@ -107,7 +116,7 @@ The merge is a per-key shallow merge: project keys override user keys; user keys
 |---|---|
 | `-v` | Verbose tier 1: per-turn token usage + tool counts to stderr. Equivalent to `LLMSH_VERBOSE=1`. |
 | `-vv` | Verbose tier 2: tier 1 + per-tool timings, policy decisions, redaction hits. Equivalent to `LLMSH_VERBOSE=2`. |
-| `--config <path>` | Load configuration from `<path>` instead of `~/.config/llmsh/config.toml`. Equivalent to `LLMSH_CONFIG=<path>`. |
+| `--config <path>` | Load configuration from `<path>` instead of the default user config (see "File locations" above). Equivalent to `LLMSH_CONFIG=<path>`. |
 
 ## Slash commands
 
@@ -167,7 +176,7 @@ Prefix a line with `!` to execute it as raw shell (e.g. `!ls -la`). Raw shell st
 
 | Path | Mode |
 |---|---|
-| `~/.config/llmsh/config.toml` | `0o600` |
+| User `config.toml` (see "File locations") | `0o600` |
 | `~/.llmsh/sessions/` | `0o700` |
 | audit files | `0o600` |
 

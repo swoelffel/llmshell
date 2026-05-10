@@ -59,7 +59,7 @@ The decision is emitted to the audit log as a `PolicyDecision` event before the 
 
 ## Configuration
 
-Edit `~/.config/llmsh/config.toml`:
+Edit the user config (`~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS — see [configuration.md](configuration.md)):
 
 ```toml
 [policy]

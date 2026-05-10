@@ -52,7 +52,7 @@ export OPENAI_API_KEY=sk-...
 ./target/release/llmsh                # or: cargo run -p llmsh-cli
 ```
 
-Useful env vars: `LLMSH_DEBUG=1` (tracing to stderr), `LLMSH_VERBOSE=1|2` (per-turn stats; CLI `-v` / `-vv` are equivalents), `LLMSH_NO_AUDIT=1` (disable audit — tests rely on this off), `LLMSH_NO_AUTOINIT=1` (skip the bootstrap `/init`), `LLMSH_CONFIG`, `LLMSH_MODEL`, `LLMSH_MEMORY_DB`. CLI flags: `-v` / `-vv`, `--config <path>`. First launch writes `~/.config/llmsh/config.toml`; a `.llmsh.toml` in the cwd merges on top. Audit log: `~/.llmsh/sessions/` (override via `audit.directory`).
+Useful env vars: `LLMSH_DEBUG=1` (tracing to stderr), `LLMSH_VERBOSE=1|2` (per-turn stats; CLI `-v` / `-vv` are equivalents), `LLMSH_NO_AUDIT=1` (disable audit — tests rely on this off), `LLMSH_NO_AUTOINIT=1` (skip the bootstrap `/init`), `LLMSH_CONFIG`, `LLMSH_MODEL`, `LLMSH_MEMORY_DB`. CLI flags: `-v` / `-vv`, `--config <path>`. First launch writes a default user config — path is OS-dependent via the `directories` crate: `~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS, `%APPDATA%\llmsh\config.toml` on Windows (see [docs/configuration.md](docs/configuration.md)). A `.llmsh.toml` in the cwd merges on top. Audit log: `~/.llmsh/sessions/` (override via `audit.directory`).
 
 ## Architecture
 

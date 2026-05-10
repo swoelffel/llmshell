@@ -40,7 +40,7 @@ Every tool call (typed or raw) is classified by `PolicyEngine` into a `RiskActio
 | `ConfirmStrong` | Like `Confirm`, but the user must type a generated phrase verbatim. Anything else cancels. |
 | `Deny` | Block the tool call. Surface the reason to the user and to the audit log. |
 
-The classification uses phrase heuristics, the tool name, the resolved path (for filesystem tools), and configuration overrides from `~/.config/llmsh/config.toml`. Details: [policy.md](policy.md).
+The classification uses phrase heuristics, the tool name, the resolved path (for filesystem tools), and configuration overrides from the user `config.toml` (see [configuration.md](configuration.md) for the per-OS path). Details: [policy.md](policy.md).
 
 The model has no authority over the decision — its output cannot short-circuit the policy. Confirm-level actions must reach `ConfirmationGate::confirm`; there is no ad-hoc prompt branch outside the gate.
 

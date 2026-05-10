@@ -19,7 +19,7 @@ export OPENAI_API_KEY=sk-...
 llmsh
 ```
 
-On first launch, `llmsh` writes a default config to `~/.config/llmsh/config.toml`. A project-level `.llmsh.toml` in the current directory merges on top.
+On first launch, `llmsh` writes a default user config (`~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS, `%APPDATA%\llmsh\config.toml` on Windows). A project-level `.llmsh.toml` in the current directory merges on top. See [docs/configuration.md](docs/configuration.md).
 
 ## Example session
 
@@ -111,7 +111,7 @@ Pre-built Linux/macOS binaries, an `install.sh` script and a Homebrew tap are tr
 
 ## Configuration
 
-`~/.config/llmsh/config.toml` controls:
+The user `config.toml` (location depends on OS — see [docs/configuration.md](docs/configuration.md)) controls:
 
 - default model (`provider:model-name`),
 - per-risk-level policy actions (allow / confirm / deny),

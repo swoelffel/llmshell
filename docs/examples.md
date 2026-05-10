@@ -132,7 +132,7 @@ openai:o1-mini
 
 llmsh> /model set openai:gpt-4o
 [ok] active model: openai:gpt-4o
-[ok] persisted as default_model in ~/.config/llmsh/config.toml
+[ok] persisted as default_model in ~/Library/Application Support/llmsh/config.toml
 ```
 
 A `model_changed` audit event is emitted. The `default_model` field is written atomically while preserving the rest of the file and the existing `0o600` permissions.

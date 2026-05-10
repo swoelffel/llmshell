@@ -33,7 +33,7 @@ What actually happened. Include relevant audit log lines if helpful (`~/.local/s
 - OS / arch:
 - Provider + model:
 - Rust toolchain (if built from source): `rustc --version`
-- Relevant config snippets from `~/.config/llmsh/config.toml` and `.llmsh.toml` (redact API keys)
+- Relevant config snippets from the user `config.toml` (`~/.config/llmsh/` on Linux, `~/Library/Application Support/llmsh/` on macOS) and `.llmsh.toml` (redact API keys)
 
 ## Audit / policy impact
 

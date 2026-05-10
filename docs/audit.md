@@ -12,7 +12,7 @@ By default, audit files are written under:
 
 One file per session, named after the session id, with the `.jsonl` extension. The directory is created with `0o700` permissions and audit files with `0o600`. Do not loosen those.
 
-Override with the `audit.directory` field in `~/.config/llmsh/config.toml`. Disable entirely with `LLMSH_NO_AUDIT=1` (not recommended outside tests).
+Override with the `audit.directory` field in the user config (`~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS — see [configuration.md](configuration.md) for all OSes). Disable entirely with `LLMSH_NO_AUDIT=1` (not recommended outside tests).
 
 ## Wire format
 
