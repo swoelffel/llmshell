@@ -51,6 +51,20 @@ const ALWAYS_SAFE: &[&str] = &[
     "ps",
     "pgrep",
     "lsof",
+    // macOS system info / hardware inspection
+    "system_profiler",
+    "sw_vers",
+    "ioreg",
+    "nettop",
+    "scutil",
+    "csrutil",
+    "vm_stat",
+    "iostat",
+    // Login records / active users
+    "last",
+    "w",
+    "who",
+    "users",
     // Pure text processing — programs without an in-place mode
     "sort",
     "uniq",
@@ -549,5 +563,29 @@ mod tests {
             is_read_only_invocation("sudo", &s(&["bash", "-c", "ls"])),
             None
         );
+    }
+
+    #[test]
+    fn macos_universal_read_only_tools() {
+        for prog in [
+            "system_profiler",
+            "sw_vers",
+            "ioreg",
+            "nettop",
+            "scutil",
+            "csrutil",
+            "vm_stat",
+            "iostat",
+            "last",
+            "w",
+            "who",
+            "users",
+        ] {
+            assert_eq!(
+                is_read_only_invocation(prog, &s(&[])),
+                Some(RiskLevel::ReadOnly),
+                "expected {prog} to be read-only"
+            );
+        }
     }
 }
