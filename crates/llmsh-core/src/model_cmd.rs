@@ -166,6 +166,16 @@ async fn fetch_filtered(ctx: &ModelCommandContext<'_>) -> anyhow::Result<Vec<Str
                     .filter(|id| set.contains(id.as_str()))
                     .collect()
             };
+            // If the provider reports an empty catalogue (e.g. an Ollama
+            // server with no installed models) or none of its models match
+            // the allowlist, surface the allowlist itself so the user can
+            // see which configured ids they could `ollama pull` / install.
+            if filtered.is_empty() && !allowed.is_empty() {
+                tracing::info!("no listed models match the allowlist; surfacing allowlist as-is");
+                let mut out = allowed.clone();
+                out.sort();
+                return Ok(out);
+            }
             filtered.sort();
             Ok(filtered)
         })
