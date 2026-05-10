@@ -21,10 +21,12 @@ impl SlashCompleter {
             "init",
             "memory",
             "model",
+            "provider",
         ];
         let mut subcommands = HashMap::new();
         subcommands.insert("memory", vec!["list", "forget", "add"]);
         subcommands.insert("model", vec!["list", "set"]);
+        subcommands.insert("provider", vec!["list", "set"]);
         Self {
             commands,
             subcommands,

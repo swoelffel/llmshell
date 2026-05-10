@@ -122,6 +122,11 @@ pub enum AuditEvent {
         from: String,
         to: String,
     },
+    ProviderChanged {
+        ts: String,
+        from: String,
+        to: String,
+    },
     ContextCompacted {
         ts: String,
         reason: String,

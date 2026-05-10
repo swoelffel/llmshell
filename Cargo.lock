@@ -1007,6 +1007,7 @@ dependencies = [
  "llmsh-audit",
  "llmsh-core",
  "llmsh-llm",
+ "llmsh-llm-ollama",
  "llmsh-llm-openai",
  "llmsh-policy",
  "llmsh-tools",
@@ -1058,6 +1059,20 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "llmsh-llm-ollama"
+version = "0.2.11-dev"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "llmsh-llm",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

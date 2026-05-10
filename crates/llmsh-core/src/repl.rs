@@ -1,9 +1,12 @@
 use crate::agent::{AgentDeps, AgentLoop};
+use crate::config::Config;
 use crate::context::ContextBuilder;
 use crate::init::MachineAudit;
 use crate::input::{classify, InputKind};
 use crate::model_cmd::{handle_model_command, ModelCommandContext, ModelListCache};
+use crate::provider_cmd::{handle_provider_command, ProviderCommandContext, ProviderSwapper};
 use crate::raw_shell::{resolve_shell, RiskScan};
+use crate::swappable::SwappableProvider;
 use llmsh_audit::event::{now_iso, AuditEvent};
 use reedline::{
     default_emacs_keybindings, ColumnarMenu, EditCommand, Emacs, KeyCode, KeyModifiers,
@@ -34,6 +37,18 @@ pub struct Repl {
     pub model_cache: ModelListCache,
     pub model_provider_prefix: Option<String>,
     pub prompt: Box<dyn reedline::Prompt>,
+    /// Effective merged config — used by `/provider` to read per-provider
+    /// model allowlists and to look up `api_key_env` / `base_url` when
+    /// hot-swapping the active provider.
+    pub cfg: Config,
+    /// Hot-swappable provider handle. Allows `/provider set <name>` to
+    /// replace the underlying provider without restarting.
+    pub swappable: Arc<SwappableProvider>,
+    /// Factory used by `/provider set` to build a new inner provider for the
+    /// requested name. Returns `(provider, model_id)`. Lives here (rather than
+    /// in llmsh-core) because crate dependencies prevent llmsh-core from
+    /// instantiating concrete provider crates.
+    pub provider_swapper: Box<dyn ProviderSwapper>,
 }
 
 const HELP_TEXT: &str = "\
@@ -75,6 +90,11 @@ Model:
   /model              Show the active model.
   /model list         List available models from the provider.
   /model set <id>     Switch the active model and persist it to config.
+
+Provider:
+  /provider           Pick a provider interactively, then a model.
+  /provider list      List configured providers (active marker on the current).
+  /provider set <name> Switch the active provider and persist it to config.
 
 Init:
   /init               Capture a machine/tooling audit into long-term memory.
@@ -225,6 +245,12 @@ impl Repl {
                 }
             }
             "model" => {
+                let allowed: Vec<String> = self
+                    .model_provider_prefix
+                    .as_deref()
+                    .and_then(|n| self.cfg.providers.get(n))
+                    .map(|p| p.models.clone())
+                    .unwrap_or_default();
                 let ctx = ModelCommandContext {
                     provider: self.deps.provider.as_ref(),
                     model_label: &self.deps.model_label,
@@ -232,9 +258,28 @@ impl Repl {
                     config_path: self.config_path.as_deref(),
                     audit: &self.deps.audit,
                     model_provider_prefix: self.model_provider_prefix.clone(),
+                    allowed_models: &allowed,
                 };
                 if let Err(e) = handle_model_command(&ctx, args).await {
                     eprintln!("model command error: {}", e);
+                }
+            }
+            "provider" => {
+                let mut ctx = ProviderCommandContext {
+                    cfg: &self.cfg,
+                    current_provider: &self.model_provider_prefix,
+                    swappable: &self.swappable,
+                    model_cache: &self.model_cache,
+                    audit: &self.deps.audit,
+                    config_path: self.config_path.as_deref(),
+                    swapper: self.provider_swapper.as_ref(),
+                };
+                match handle_provider_command(&mut ctx, args).await {
+                    Ok(Some(new_name)) => {
+                        self.model_provider_prefix = Some(new_name);
+                    }
+                    Ok(None) => {}
+                    Err(e) => eprintln!("provider command error: {}", e),
                 }
             }
             "clear" => {

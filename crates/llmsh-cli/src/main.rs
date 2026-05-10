@@ -18,6 +18,7 @@ use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
 use llmsh_core::repl::{Repl, ReplState};
 use llmsh_llm::provider::LlmProvider;
+use llmsh_llm_ollama::provider::{OllamaConfig, OllamaProvider};
 use llmsh_llm_openai::provider::{OpenAIConfig, OpenAIProvider};
 use llmsh_policy::context::PolicyContext;
 use llmsh_policy::engine::{DefaultPolicyConfig, DefaultPolicyEngine, PolicyEngine, RiskAction};
@@ -110,9 +111,17 @@ async fn main() -> anyhow::Result<()> {
     })?;
 
     // 3. Provider
-    let (provider, shared_model, provider_prefix) = build_provider(&cfg)?;
-    let provider: Arc<dyn LlmProvider> =
-        Arc::new(llmsh_core::thinking::ThinkingProvider::new(provider));
+    // Chain: inner concrete provider → SwappableProvider (hot-swap shim) →
+    // ThinkingProvider (status indicator). The SwappableProvider handle is
+    // kept in the REPL so `/provider set …` can replace the inner provider.
+    let (inner, shared_model, provider_prefix) = build_provider(&cfg)?;
+    let swappable = Arc::new(llmsh_core::swappable::SwappableProvider::new(
+        inner,
+        shared_model.clone(),
+    ));
+    let provider: Arc<dyn LlmProvider> = Arc::new(llmsh_core::thinking::ThinkingProvider::new(
+        swappable.clone() as Arc<dyn LlmProvider>,
+    ));
 
     // 4. Tools
     let mut registry = ToolRegistry::new();
@@ -290,6 +299,9 @@ async fn main() -> anyhow::Result<()> {
         model_cache: ModelListCache::new(),
         model_provider_prefix: provider_prefix,
         prompt,
+        cfg: cfg.clone(),
+        swappable,
+        provider_swapper: Box::new(CliProviderSwapper),
     };
     repl.run().await?;
     Ok(())
@@ -300,20 +312,58 @@ fn build_provider(cfg: &Config) -> anyhow::Result<ProviderWithModel> {
         .default_model
         .split_once(':')
         .ok_or_else(|| anyhow::anyhow!("default_model must be \"provider:model\""))?;
+    let inner = build_inner_provider(provider_name, model, cfg)?;
+    let shared = Arc::new(RwLock::new(model.to_string()));
+    Ok((inner, shared, Some(provider_name.to_string())))
+}
+
+/// Concrete provider factory: dispatches on provider name. Used both at
+/// startup and (via `CliProviderSwapper`) for `/provider set <name>`.
+fn build_inner_provider(
+    provider_name: &str,
+    model: &str,
+    cfg: &Config,
+) -> anyhow::Result<Arc<dyn LlmProvider>> {
     let pcfg = cfg
         .providers
         .get(provider_name)
         .ok_or_else(|| anyhow::anyhow!("provider {} not configured", provider_name))?;
-    let api_key = std::env::var(&pcfg.api_key_env)
-        .map_err(|_| anyhow::anyhow!("env var {} not set", pcfg.api_key_env))?;
-    let p = OpenAIProvider::new(OpenAIConfig {
-        base_url: pcfg.base_url.clone(),
-        api_key,
-        model: model.into(),
-        timeout_ms: 60_000,
-    })?;
-    let shared = p.shared_model();
-    Ok((Arc::new(p), shared, Some(provider_name.to_string())))
+    match provider_name {
+        "openai" => {
+            let env_var = pcfg
+                .api_key_env
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("openai provider requires api_key_env"))?;
+            let api_key = std::env::var(env_var)
+                .map_err(|_| anyhow::anyhow!("env var {} not set", env_var))?;
+            let p = OpenAIProvider::new(OpenAIConfig {
+                base_url: pcfg.base_url.clone(),
+                api_key,
+                model: model.into(),
+                timeout_ms: 60_000,
+            })?;
+            Ok(Arc::new(p))
+        }
+        "ollama" => {
+            // Ollama default config does not require auth (local server). If
+            // the user did set api_key_env we ignore it for now.
+            let p = OllamaProvider::new(OllamaConfig {
+                base_url: pcfg.base_url.clone(),
+                model: model.into(),
+                timeout_ms: 120_000,
+            })?;
+            Ok(Arc::new(p))
+        }
+        other => anyhow::bail!("unknown provider \"{}\"; supported: openai, ollama", other),
+    }
+}
+
+struct CliProviderSwapper;
+
+impl llmsh_core::provider_cmd::ProviderSwapper for CliProviderSwapper {
+    fn build(&self, name: &str, model: &str, cfg: &Config) -> anyhow::Result<Arc<dyn LlmProvider>> {
+        build_inner_provider(name, model, cfg)
+    }
 }
 
 fn policy_config_from(cfg: &Config) -> DefaultPolicyConfig {

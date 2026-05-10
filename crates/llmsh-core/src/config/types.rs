@@ -20,9 +20,17 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    pub api_key_env: String,
+    /// Name of the env var holding the API key for this provider.
+    /// Optional: providers like local Ollama require no auth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
     pub base_url: String,
     pub tool_calling: String,
+    /// Curated allowlist of model ids surfaced via `/model`. When empty, the
+    /// provider's `list_models()` response is used unfiltered (compat with
+    /// pre-v0.2.11 configs that lack this field).
+    #[serde(default)]
+    pub models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,9 +224,32 @@ impl Config {
         providers.insert(
             "openai".into(),
             ProviderConfig {
-                api_key_env: "OPENAI_API_KEY".into(),
+                api_key_env: Some("OPENAI_API_KEY".into()),
                 base_url: "https://api.openai.com/v1".into(),
                 tool_calling: "native".into(),
+                models: vec![
+                    "gpt-5".into(),
+                    "gpt-5-mini".into(),
+                    "gpt-4.1".into(),
+                    "gpt-4.1-mini".into(),
+                    "o3".into(),
+                    "o4-mini".into(),
+                ],
+            },
+        );
+        providers.insert(
+            "ollama".into(),
+            ProviderConfig {
+                api_key_env: None,
+                base_url: "http://localhost:11434".into(),
+                tool_calling: "native".into(),
+                models: vec![
+                    "llama3.1:8b".into(),
+                    "qwen2.5-coder:7b".into(),
+                    "qwen2.5-coder:32b".into(),
+                    "mistral-nemo:12b".into(),
+                    "qwen3:14b".into(),
+                ],
             },
         );
         Self {

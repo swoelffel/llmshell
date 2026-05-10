@@ -29,6 +29,7 @@ llmsh-audit = { path = "../llmsh-audit" }
 llmsh-core = { path = "../llmsh-core" }
 llmsh-llm = { path = "../llmsh-llm" }
 llmsh-llm-openai = { path = "../llmsh-llm-openai" }
+llmsh-llm-ollama = { path = "../llmsh-llm-ollama" }
 llmsh-policy = { path = "../llmsh-policy" }
 llmsh-tools = { path = "../llmsh-tools" }
 reedline = { workspace = true }

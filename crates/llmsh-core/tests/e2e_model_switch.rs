@@ -103,6 +103,7 @@ async fn set_model_flow_updates_shared_label() {
         config_path: None,
         audit: &audit,
         model_provider_prefix: None,
+        allowed_models: &[],
     };
 
     set_model_flow(&ctx, "gpt-4o").await.unwrap();
@@ -131,6 +132,7 @@ async fn set_model_flow_unknown_model_prints_error() {
         config_path: None,
         audit: &audit,
         model_provider_prefix: None,
+        allowed_models: &[],
     };
 
     let before = model_label.read().unwrap().clone();
@@ -253,6 +255,7 @@ async fn rendered_system_prompt_reflects_model_switch() {
         config_path: None,
         audit: &deps.audit,
         model_provider_prefix: None,
+        allowed_models: &[],
     };
     set_model_flow(&ctx, "gpt-4o").await.unwrap();
 
@@ -313,6 +316,7 @@ tool_calling = "native"
         config_path: Some(cfg_path.as_path()),
         audit: &audit,
         model_provider_prefix: Some("openai".into()),
+        allowed_models: &[],
     };
 
     set_model_flow(&ctx, "gpt-4o").await.unwrap();

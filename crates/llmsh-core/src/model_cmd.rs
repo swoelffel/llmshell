@@ -1,36 +1,9 @@
 use std::io::BufRead;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use regex::Regex;
-
-// ─── Chat-only filter ───────────────────────────────────────────────────────
-
-static INCLUDE_RE: OnceLock<Regex> = OnceLock::new();
-
-fn include_re() -> &'static Regex {
-    INCLUDE_RE.get_or_init(|| Regex::new(r"^(gpt-|o[1-9]|chatgpt-)").unwrap())
-}
-
-const EXCLUDE_PATTERNS: &[&str] = &[
-    "embedding",
-    "whisper",
-    "tts",
-    "dall-e",
-    "moderation",
-    "audio",
-    "babbage",
-    "davinci",
-];
-
-pub fn is_chat_model(id: &str) -> bool {
-    if !include_re().is_match(id) {
-        return false;
-    }
-    !EXCLUDE_PATTERNS.iter().any(|p| id.contains(p))
-}
 
 // ─── Levenshtein ────────────────────────────────────────────────────────────
 
@@ -91,6 +64,15 @@ impl ModelListCache {
         Self::default()
     }
 
+    /// Forget any cached entry so the next call refetches. Used after a
+    /// provider swap, where the previous cache belongs to a different
+    /// provider's catalogue.
+    pub fn invalidate(&self) {
+        if let Ok(mut g) = self.inner.lock() {
+            *g = None;
+        }
+    }
+
     pub async fn get_or_refresh<F, Fut>(
         &self,
         ttl: Duration,
@@ -131,6 +113,10 @@ pub struct ModelCommandContext<'a> {
     /// Provider prefix (e.g. `"openai"`) re-prepended when persisting `default_model`
     /// in config.toml. The runtime `model_label` only holds the bare id.
     pub model_provider_prefix: Option<String>,
+    /// Curated allowlist for the active provider (from `config.toml`'s
+    /// `[providers.<name>] models = [...]`). When empty, the provider's
+    /// `list_models()` response is used unfiltered (legacy behaviour).
+    pub allowed_models: &'a [String],
 }
 
 pub async fn handle_model_command(
@@ -149,14 +135,37 @@ pub async fn handle_model_command(
 }
 
 async fn fetch_filtered(ctx: &ModelCommandContext<'_>) -> anyhow::Result<Vec<String>> {
+    let allowed: Vec<String> = ctx.allowed_models.to_vec();
     ctx.cache
-        .get_or_refresh(Duration::from_secs(60), || async {
-            let infos = ctx.provider.list_models().await?;
-            let mut filtered: Vec<String> = infos
-                .into_iter()
-                .filter(|m| is_chat_model(&m.id))
-                .map(|m| m.id)
-                .collect();
+        .get_or_refresh(Duration::from_secs(60), || async move {
+            // If the provider's listing endpoint is unavailable (e.g. Ollama
+            // server offline) but we have a curated allowlist, fall back to
+            // the allowlist so /model can still be used.
+            let infos = match ctx.provider.list_models().await {
+                Ok(v) => v,
+                Err(e) if !allowed.is_empty() => {
+                    tracing::warn!(
+                        "list_models failed ({}); falling back to configured allowlist",
+                        e
+                    );
+                    let mut out = allowed.clone();
+                    out.sort();
+                    return Ok(out);
+                }
+                Err(e) => return Err(e),
+            };
+            let ids: Vec<String> = infos.into_iter().map(|m| m.id).collect();
+            let mut filtered: Vec<String> = if allowed.is_empty() {
+                // No allowlist: surface everything (legacy behaviour for
+                // configs without a `models = [...]` field).
+                ids
+            } else {
+                let set: std::collections::HashSet<&str> =
+                    allowed.iter().map(|s| s.as_str()).collect();
+                ids.into_iter()
+                    .filter(|id| set.contains(id.as_str()))
+                    .collect()
+            };
             filtered.sort();
             Ok(filtered)
         })
@@ -290,35 +299,6 @@ fn build_stored_id(prefix: Option<&str>, model_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn chat_model_filter_included() {
-        for id in &[
-            "gpt-4o-mini",
-            "gpt-3.5-turbo",
-            "o1-preview",
-            "o3-mini",
-            "chatgpt-4o-latest",
-        ] {
-            assert!(is_chat_model(id), "{} should be included", id);
-        }
-    }
-
-    #[test]
-    fn chat_model_filter_excluded() {
-        for id in &[
-            "text-embedding-3-small",
-            "whisper-1",
-            "tts-1",
-            "dall-e-3",
-            "gpt-4o-audio-preview",
-            "babbage-002",
-            "davinci-002",
-        ] {
-            assert!(!is_chat_model(id), "{} should be excluded", id);
-        }
-        assert!(!is_chat_model("omni-moderation-latest"));
-    }
 
     #[test]
     fn levenshtein_same() {

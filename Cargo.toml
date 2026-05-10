@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/llmsh-llm",
     "crates/llmsh-llm-openai",
+    "crates/llmsh-llm-ollama",
     "crates/llmsh-policy",
     "crates/llmsh-audit",
     "crates/llmsh-tools",
