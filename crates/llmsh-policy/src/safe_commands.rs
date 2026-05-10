@@ -211,6 +211,12 @@ pub fn is_read_only_invocation(program: &str, args: &[String]) -> Option<RiskLev
         "git" => git_args_are_read_only(args),
         p if RUNTIMES_VERSION_ONLY.contains(&p) => is_version_only(args),
         p if PKG_MANAGERS.contains(&p) => pkg_args_are_read_only(args),
+        "dscl" => dscl_args_are_read_only(args),
+        "pfctl" => pfctl_args_are_read_only(args),
+        "defaults" => defaults_args_are_read_only(args),
+        "launchctl" => launchctl_args_are_read_only(args),
+        "networksetup" => networksetup_args_are_read_only(args),
+        "sysctl" => sysctl_args_are_read_only(args),
         _ => false,
     };
     if safe {
@@ -324,6 +330,65 @@ fn git_args_are_read_only(args: &[String]) -> bool {
         ),
         _ => true,
     }
+}
+
+fn dscl_args_are_read_only(args: &[String]) -> bool {
+    const READ_SUBS: &[&str] = &[
+        "list", "read", "readall", "search", "-list", "-read", "-readall", "-search",
+    ];
+    args.iter().any(|a| READ_SUBS.contains(&a.as_str()))
+}
+
+fn pfctl_args_are_read_only(args: &[String]) -> bool {
+    let Some(first) = args.first().map(String::as_str) else {
+        return false;
+    };
+    if !first.starts_with("-s") {
+        return false;
+    }
+    !args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "-e" | "-d" | "-f" | "-F" | "-k" | "-K" | "-N" | "-O" | "-q" | "-R" | "-T"
+        )
+    })
+}
+
+fn defaults_args_are_read_only(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("read") | Some("read-type") | Some("domains") | Some("find") | Some("help")
+    )
+}
+
+fn launchctl_args_are_read_only(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("list")
+            | Some("print")
+            | Some("print-cache")
+            | Some("print-disabled")
+            | Some("blame")
+            | Some("dumpstate")
+            | Some("help")
+            | Some("version")
+    )
+}
+
+fn networksetup_args_are_read_only(args: &[String]) -> bool {
+    let Some(first) = args.first().map(String::as_str) else {
+        return false;
+    };
+    first.starts_with("-list") || first.starts_with("-get") || first.starts_with("-print")
+}
+
+fn sysctl_args_are_read_only(args: &[String]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    !args
+        .iter()
+        .any(|a| a == "-w" || a == "-p" || a == "-f" || a.contains('='))
 }
 
 #[cfg(test)]
@@ -561,6 +626,124 @@ mod tests {
         // sudo is in META_EXEC, not SHELLS — it must not be deshelled.
         assert_eq!(
             is_read_only_invocation("sudo", &s(&["bash", "-c", "ls"])),
+            None
+        );
+    }
+
+    #[test]
+    fn dscl_read_subcommands() {
+        assert_eq!(
+            is_read_only_invocation("dscl", &s(&[".", "list", "/Users"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("dscl", &s(&[".", "read", "/Users/root"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("dscl", &s(&[".", "-list", "/Users"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("dscl", &s(&[".", "create", "/Users/x"])),
+            None
+        );
+        assert_eq!(is_read_only_invocation("dscl", &s(&[])), None);
+    }
+
+    #[test]
+    fn pfctl_status_only() {
+        assert_eq!(
+            is_read_only_invocation("pfctl", &s(&["-s", "info"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("pfctl", &s(&["-sr"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(is_read_only_invocation("pfctl", &s(&["-e"])), None);
+        assert_eq!(is_read_only_invocation("pfctl", &s(&["-d"])), None);
+        assert_eq!(
+            is_read_only_invocation("pfctl", &s(&["-f", "/etc/pf.conf"])),
+            None
+        );
+    }
+
+    #[test]
+    fn defaults_read_only() {
+        assert_eq!(
+            is_read_only_invocation("defaults", &s(&["read", "com.apple.dock"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("defaults", &s(&["domains"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("defaults", &s(&["write", "com.apple.dock", "x", "1"])),
+            None
+        );
+    }
+
+    #[test]
+    fn launchctl_inspection_only() {
+        for sub in ["list", "print", "print-disabled", "blame", "dumpstate"] {
+            assert_eq!(
+                is_read_only_invocation("launchctl", &s(&[sub])),
+                Some(RiskLevel::ReadOnly),
+                "launchctl {sub}"
+            );
+        }
+        assert_eq!(
+            is_read_only_invocation("launchctl", &s(&["load", "x.plist"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("launchctl", &s(&["unload", "x.plist"])),
+            None
+        );
+    }
+
+    #[test]
+    fn networksetup_read_only_flags() {
+        assert_eq!(
+            is_read_only_invocation("networksetup", &s(&["-listallhardwareports"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("networksetup", &s(&["-getairportnetwork", "en0"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("networksetup", &s(&["-printcommands"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("networksetup", &s(&["-setairportpower", "en0", "off"])),
+            None
+        );
+    }
+
+    #[test]
+    fn sysctl_read_only_no_write_flag() {
+        assert_eq!(
+            is_read_only_invocation("sysctl", &s(&["-a"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("sysctl", &s(&["hw.memsize"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("sysctl", &s(&["-w", "net.ipv4.ip_forward=1"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("sysctl", &s(&["kernel.foo=1"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("sysctl", &s(&["-p", "/etc/sysctl.conf"])),
             None
         );
     }
