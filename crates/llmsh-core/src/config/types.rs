@@ -256,14 +256,34 @@ impl Config {
                 sensitive_paths: SensitivePathsPolicy {
                     action: "deny".into(),
                     patterns: vec![
+                        // SSH
                         "~/.ssh/**".into(),
-                        "~/.aws/**".into(),
-                        "~/.config/gcloud/**".into(),
-                        ".env*".into(),
                         "**/id_rsa".into(),
                         "**/id_ed25519".into(),
+                        "**/id_ecdsa".into(),
+                        // Cloud provider creds
+                        "~/.aws/**".into(),
+                        "~/.config/gcloud/**".into(),
+                        "~/.config/gh/**".into(),
+                        "~/.docker/config.json".into(),
+                        "~/.kube/**".into(),
+                        // Generic dotfiles
+                        "~/.netrc".into(),
+                        "~/.pgpass".into(),
+                        // Project secrets
+                        ".env".into(),
+                        ".env.*".into(),
+                        "**/.env".into(),
+                        "**/.env.*".into(),
                         "**/credentials*".into(),
                         "**/secrets.*".into(),
+                        "**/*.pem".into(),
+                        "**/*.key".into(),
+                        // System sensitive
+                        "/etc/sudoers".into(),
+                        "/etc/sudoers.d/**".into(),
+                        "/etc/shadow".into(),
+                        "/etc/passwd".into(),
                     ],
                 },
                 run_process: RunProcessPolicy::default(),
