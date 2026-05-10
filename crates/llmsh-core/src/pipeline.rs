@@ -120,6 +120,17 @@ impl Pipeline {
                 }
             }
         }
+        // Privilege-escalation flag: post-deshell so `bash -c "sudo …"` is caught.
+        if enriched.tool_name == "run_process"
+            && detects_privilege_escalation(&enriched.args)
+            && !enriched
+                .flags
+                .contains(&llmsh_policy::types::PolicyFlag::UsesPrivilegeEscalation)
+        {
+            enriched
+                .flags
+                .push(llmsh_policy::types::PolicyFlag::UsesPrivilegeEscalation);
+        }
         // Apply LLM-claimed risk as upgrade-only. The model can RAISE the
         // risk level above the deterministic verdict but never lower it.
         if enriched.tool_name == "run_process" {
@@ -150,6 +161,46 @@ impl Pipeline {
 
 fn uuid_short() -> String {
     uuid::Uuid::new_v4().to_string()[..8].to_string()
+}
+
+/// Inspect the outer (program, args) pair AND, if it is a `bash -c "…"` form
+/// that the safe_commands deshell would accept, the inner program too.
+/// Returns `true` iff either layer is `sudo`/`doas`/`su`.
+fn detects_privilege_escalation(args: &serde_json::Value) -> bool {
+    let Some(program) = args.get("program").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    if matches!(program, "sudo" | "doas" | "su") {
+        return true;
+    }
+    const SHELLS: &[&str] = &[
+        "bash", "sh", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "ash",
+    ];
+    if !SHELLS.contains(&program) {
+        return false;
+    }
+    let arg_arr = match args.get("args").and_then(|v| v.as_array()) {
+        Some(a) => a,
+        None => return false,
+    };
+    if arg_arr.len() != 2 {
+        return false;
+    }
+    if arg_arr[0].as_str() != Some("-c") {
+        return false;
+    }
+    let payload = match arg_arr[1].as_str() {
+        Some(p) => p,
+        None => return false,
+    };
+    let tokens = match shlex::split(payload) {
+        Some(t) => t,
+        None => return false,
+    };
+    matches!(
+        tokens.first().map(String::as_str),
+        Some("sudo") | Some("doas") | Some("su")
+    )
 }
 
 fn classify_run_process_args(args: &serde_json::Value) -> Option<RiskLevel> {
@@ -287,6 +338,63 @@ mod classifier_tests {
         let step = &out.plan.steps[0];
         assert_eq!(step.call.declared_risk, RiskLevel::Unknown);
         assert!(step.call.flags.contains(&PolicyFlag::ModelDisagreesOnRisk));
+    }
+
+    #[test]
+    fn privesc_flag_set_for_direct_sudo() {
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"sudo","args":["softwareupdate","--install","--all"],
+                "intent":"update","claimed_risk":"write"
+            })),
+            &ctx(),
+            &[],
+        );
+        let step = &out.plan.steps[0];
+        assert!(step
+            .call
+            .flags
+            .contains(&PolicyFlag::UsesPrivilegeEscalation));
+        assert_eq!(step.decision.effective_risk, RiskLevel::Privileged);
+    }
+
+    #[test]
+    fn privesc_flag_set_through_bash_wrapper() {
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"bash","args":["-c","sudo softwareupdate --install --all"],
+                "intent":"update","claimed_risk":"write"
+            })),
+            &ctx(),
+            &[],
+        );
+        let step = &out.plan.steps[0];
+        assert!(
+            step.call
+                .flags
+                .contains(&PolicyFlag::UsesPrivilegeEscalation),
+            "flag must follow through bash -c wrapper"
+        );
+        assert_eq!(step.decision.effective_risk, RiskLevel::Privileged);
+    }
+
+    #[test]
+    fn privesc_flag_not_set_for_plain_ls() {
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"ls","args":["-la"],
+                "intent":"list","claimed_risk":"read_only"
+            })),
+            &ctx(),
+            &[],
+        );
+        assert!(!out.plan.steps[0]
+            .call
+            .flags
+            .contains(&PolicyFlag::UsesPrivilegeEscalation));
     }
 
     #[test]

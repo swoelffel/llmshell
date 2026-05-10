@@ -58,10 +58,6 @@ pub fn enrich(
                 })
                 .unwrap_or_default();
 
-            // Privilege escalation
-            if matches!(program, "sudo" | "doas" | "su") {
-                flags.push(PolicyFlag::UsesPrivilegeEscalation);
-            }
             // Large blast radius patterns
             let joined = format!("{} {}", program, args.join(" "));
             let blast_patterns = [("rm", ["-rf", "-fr", "--recursive"])];
@@ -135,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn sudo_flagged() {
+    fn sudo_no_longer_flagged_at_enrich_layer() {
         let call = ToolCall {
             id: "1".into(),
             name: "run_process".into(),
@@ -151,6 +147,8 @@ mod tests {
                 sensitive_patterns: &[],
             },
         );
-        assert!(out.flags.contains(&PolicyFlag::UsesPrivilegeEscalation));
+        // Privilege-escalation detection moved to pipeline.rs (covers bash -c
+        // "sudo …" too). enrich.rs no longer sets it.
+        assert!(!out.flags.contains(&PolicyFlag::UsesPrivilegeEscalation));
     }
 }
