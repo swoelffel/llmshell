@@ -37,7 +37,44 @@ impl Tool for RunProcess {
         "Run a program with arguments. No shell is invoked: `~` and `~/…` are \
 expanded against $HOME, but globs (`*`, `?`, `[]`) and environment variables \
 (`$VAR`, `${VAR}`) are NOT — they are passed literally. To use a glob, call \
-the `glob` tool first and pass the resolved paths as separate args."
+the `glob` tool first and pass the resolved paths as separate args.\n\
+\n\
+SHELL USAGE — important.\n\
+Use `program` + `args` directly whenever possible. Wrap in `bash -c \"…\"`\n\
+ONLY when you genuinely need:\n\
+  • a pipe (cmd1 | cmd2)\n\
+  • redirection (>, <, <<)\n\
+  • variable expansion ($VAR, $(cmd))\n\
+  • subshell or compound logic (&&, ||, ;)\n\
+\n\
+Examples:\n\
+  ❌  program=bash, args=[\"-c\", \"ls -la /tmp\"]\n\
+  ✅  program=ls,   args=[\"-la\", \"/tmp\"]\n\
+\n\
+  ❌  program=bash, args=[\"-c\", \"dscl . list /Users\"]\n\
+  ✅  program=dscl, args=[\".\", \"list\", \"/Users\"]\n\
+\n\
+  ❌  program=bash, args=[\"-c\", \"grep TODO src/main.rs\"]\n\
+  ✅  program=grep, args=[\"TODO\", \"src/main.rs\"]\n\
+\n\
+  ✅  program=bash, args=[\"-c\", \"ls /tmp | wc -l\"]   (pipe — legitimate)\n\
+  ✅  program=bash, args=[\"-c\", \"echo $HOME\"]        (var — legitimate)\n\
+\n\
+For `*` / `?` patterns, call the `glob` tool FIRST to expand the pattern,\n\
+then pass the resulting paths to `program` directly.\n\
+\n\
+Why it matters: the policy classifier inspects `program` + `args` to grant\n\
+read-only commands `Allow` (no prompt). Wrapping in bash blinds the\n\
+classifier — every command then requires user confirmation, which is\n\
+friction the user dislikes.\n\
+\n\
+claimed_risk — your honest estimate (the policy may override):\n\
+  • read_only   — no filesystem/network/state mutation (ls, grep, cat…)\n\
+  • low_risk    — touches state but reversibly (mkdir, touch, cd…)\n\
+  • write       — creates or modifies files (cp, mv, edit…)\n\
+  • destructive — irreversible loss possible (rm -rf, dd, format…)\n\
+  • network     — outbound network call (curl, wget, ssh…)\n\
+  • privileged  — requires root (sudo, doas, anything in /etc, /System…)"
     }
     fn input_schema(&self) -> Value {
         json!({
