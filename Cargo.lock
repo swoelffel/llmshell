@@ -984,7 +984,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llmsh-audit"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "anyhow",
  "chrono",
@@ -999,7 +999,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-cli"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "anyhow",
  "clap",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-core"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm-ollama"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1077,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm-openai"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-policy"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "serde",
  "serde_json",
@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-tools"
-version = "0.2.11"
+version = "0.2.12-dev"
 dependencies = [
  "anyhow",
  "async-trait",
