@@ -136,11 +136,51 @@ const GIT_READ_SUBCOMMANDS: &[&str] = &[
     "config",
 ];
 
+const SHELL_METACHARS: &[char] = &['|', '&', ';', '>', '<', '$', '`', '(', ')', '{', '}', '\n'];
+
+/// Returns `Some((inner_program, inner_args))` only when `program ∈ SHELLS`,
+/// `args` is exactly `["-c", payload]`, and `payload` is free of shell
+/// metacharacters and parses cleanly via `shlex::split`. Otherwise `None`.
+fn extract_shell_payload(program: &str, args: &[String]) -> Option<(String, Vec<String>)> {
+    if !SHELLS.contains(&program) {
+        return None;
+    }
+    if args.len() != 2 || args[0] != "-c" {
+        return None;
+    }
+    let payload = &args[1];
+    if payload.chars().any(|c| SHELL_METACHARS.contains(&c)) {
+        return None;
+    }
+    let mut tokens = shlex::split(payload)?;
+    if tokens.is_empty() {
+        return None;
+    }
+    if tokens[0].contains('=') {
+        return None;
+    }
+    if tokens
+        .iter()
+        .any(|t| t.starts_with('*') || t.starts_with('?') || t.starts_with('['))
+    {
+        return None;
+    }
+    let inner_prog = tokens.remove(0);
+    Some((inner_prog, tokens))
+}
+
 pub fn is_read_only_invocation(program: &str, args: &[String]) -> Option<RiskLevel> {
     if program.contains('/') {
         return None;
     }
-    if SHELLS.contains(&program) || META_EXEC.contains(&program) {
+    if SHELLS.contains(&program) {
+        let (inner_prog, inner_args) = extract_shell_payload(program, args)?;
+        if SHELLS.contains(&inner_prog.as_str()) || META_EXEC.contains(&inner_prog.as_str()) {
+            return None;
+        }
+        return is_read_only_invocation(&inner_prog, &inner_args);
+    }
+    if META_EXEC.contains(&program) {
         return None;
     }
 
@@ -297,8 +337,20 @@ mod tests {
 
     #[test]
     fn shells_are_blocked() {
+        // Shells without a safe `-c <payload>` form are still blocked.
         for prog in ["bash", "sh", "zsh", "fish", "dash"] {
-            assert_eq!(is_read_only_invocation(prog, &s(&["-c", "ls"])), None);
+            // Interactive / no args
+            assert_eq!(
+                is_read_only_invocation(prog, &s(&[])),
+                None,
+                "{prog} with no args"
+            );
+            // Unsafe payload (pipe metachar)
+            assert_eq!(
+                is_read_only_invocation(prog, &s(&["-c", "ls | grep foo"])),
+                None,
+                "{prog} -c 'ls | grep foo'"
+            );
         }
     }
 
@@ -422,5 +474,80 @@ mod tests {
         );
         assert_eq!(parse_claimed_risk("unknown"), Some(RiskLevel::Unknown));
         assert_eq!(parse_claimed_risk("nonsense"), None);
+    }
+
+    #[test]
+    fn deshell_engages_for_simple_read_only() {
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls -la /tmp"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("sh", &s(&["-c", "grep TODO src/main.rs"])),
+            Some(RiskLevel::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn deshell_refuses_metacharacters() {
+        for payload in [
+            "ls | grep foo",
+            "echo $HOME",
+            "ls *.txt",
+            "cat /etc/hosts > /tmp/x",
+            "ls; rm foo",
+            "ls && pwd",
+            "ls\nrm",
+            "echo `whoami`",
+            "(ls)",
+            "{ ls; }",
+        ] {
+            assert_eq!(
+                is_read_only_invocation("bash", &s(&["-c", payload])),
+                None,
+                "payload should be refused: {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn deshell_refuses_unsafe_inner_program() {
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "rm -rf /tmp"])),
+            None
+        );
+    }
+
+    #[test]
+    fn deshell_recursion_bounded_to_one_level() {
+        // Inner is itself a shell wrapper → second-level deshell is refused.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "bash -c ls"])),
+            None
+        );
+    }
+
+    #[test]
+    fn deshell_only_dash_c_form() {
+        // Wrong arg shape: not exactly ["-c", payload].
+        assert_eq!(is_read_only_invocation("bash", &s(&["ls"])), None);
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls", "extra"])),
+            None
+        );
+        assert_eq!(is_read_only_invocation("bash", &s(&["-c"])), None);
+    }
+
+    #[test]
+    fn deshell_does_not_engage_for_sudo_wrapper() {
+        // sudo is in META_EXEC, not SHELLS — it must not be deshelled.
+        assert_eq!(
+            is_read_only_invocation("sudo", &s(&["bash", "-c", "ls"])),
+            None
+        );
     }
 }
