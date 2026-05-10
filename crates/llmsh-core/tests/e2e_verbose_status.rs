@@ -98,6 +98,7 @@ async fn session_stats_accumulate_across_turns() {
         registry: registry.clone(),
         policy,
         home: None,
+        auto_classify_run_process: false,
     };
     let writer = AuditWriter::open(audit_dir.path(), "test-session").unwrap();
 

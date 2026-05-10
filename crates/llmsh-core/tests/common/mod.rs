@@ -124,6 +124,7 @@ pub fn build_test_deps_with_memory(
         registry: registry.clone(),
         policy,
         home: None,
+        auto_classify_run_process: false,
     };
     let writer = AuditWriter::open(audit_dir, "test-session").unwrap();
     let system_prompt = Arc::new(llmsh_core::context::MemorySystemPrompt::new(

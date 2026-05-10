@@ -85,6 +85,7 @@ async fn redaction_no_literal_secrets_in_audit() {
             registry: registry.clone(),
             policy,
             home: None,
+            auto_classify_run_process: false,
         };
         Arc::new(AgentDeps {
             provider: Arc::new(common::MockLlmProvider::new(scripted)),

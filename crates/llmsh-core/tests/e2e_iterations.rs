@@ -55,6 +55,7 @@ async fn max_iterations_stops_loop() {
         registry: registry.clone(),
         policy,
         home: None,
+        auto_classify_run_process: false,
     };
 
     // Canonicalize to avoid macOS /var -> /private/var symlink mismatches.

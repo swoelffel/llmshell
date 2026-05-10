@@ -79,6 +79,7 @@ fn build_deps(
         registry: registry.clone(),
         policy: policy.clone(),
         home: None,
+        auto_classify_run_process: false,
     };
     let executor = ToolExecutor {
         registry: registry.clone(),

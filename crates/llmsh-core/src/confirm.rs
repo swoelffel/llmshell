@@ -81,6 +81,12 @@ pub(crate) fn summarize_call(call: &CheckedToolCall) -> Vec<String> {
     let mut out = Vec::new();
     match call.tool_name.as_str() {
         "run_process" => {
+            if let Some(intent) = call.args.get("intent").and_then(Value::as_str) {
+                out.push(format!("  intent: {}", truncate(intent, SUMMARY_MAX)));
+            }
+            if let Some(cr) = call.args.get("claimed_risk").and_then(Value::as_str) {
+                out.push(format!("  llm_claimed_risk: {}", cr));
+            }
             let program = call
                 .args
                 .get("program")
@@ -149,6 +155,9 @@ fn flag_label(f: &PolicyFlag) -> &'static str {
         PolicyFlag::LargeBlastRadius => "large_blast_radius",
         PolicyFlag::UsesShell => "uses_shell",
         PolicyFlag::UsesPrivilegeEscalation => "privilege_escalation",
+        PolicyFlag::KnownReadOnlyCommand => "known_read_only_command",
+        PolicyFlag::ModelClaimedRisk => "model_claimed_risk",
+        PolicyFlag::ModelDisagreesOnRisk => "model_disagrees_on_risk",
     }
 }
 
@@ -192,6 +201,24 @@ mod tests {
             "{:?}",
             s
         );
+    }
+
+    #[test]
+    fn run_process_shows_intent_and_claimed_risk() {
+        let c = call(
+            "run_process",
+            json!({
+                "program":"crontab","args":["-l"],
+                "intent":"check cron entries","claimed_risk":"read_only"
+            }),
+        );
+        let lines = summarize_call(&c);
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("intent: check cron entries")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("llm_claimed_risk: read_only")));
     }
 
     #[test]

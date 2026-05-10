@@ -76,6 +76,7 @@ async fn external_cancel_recorded_in_audit() {
         registry: registry.clone(),
         policy,
         home: None,
+        auto_classify_run_process: false,
     };
 
     let deps = Arc::new(AgentDeps {

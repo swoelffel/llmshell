@@ -152,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         registry: registry.clone(),
         policy: policy.clone(),
         home: home.clone(),
+        auto_classify_run_process: cfg.policy.run_process.auto_classify_read_only,
     };
 
     let cancel = CancellationToken::new();

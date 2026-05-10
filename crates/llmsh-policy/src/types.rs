@@ -12,6 +12,22 @@ pub enum RiskLevel {
     Unknown,
 }
 
+impl RiskLevel {
+    /// Numeric severity. Higher = riskier. Used to compare model claims to
+    /// classifier output (upgrade-only).
+    pub fn severity(self) -> u8 {
+        match self {
+            RiskLevel::ReadOnly => 0,
+            RiskLevel::LowRisk => 1,
+            RiskLevel::Network => 2,
+            RiskLevel::Write => 3,
+            RiskLevel::Unknown => 4,
+            RiskLevel::Destructive => 5,
+            RiskLevel::Privileged => 6,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyFlag {
@@ -21,6 +37,16 @@ pub enum PolicyFlag {
     LargeBlastRadius,
     UsesShell,
     UsesPrivilegeEscalation,
+    /// Set by the pipeline when the deterministic classifier matched a
+    /// read-only `run_process` invocation. Audit-visible.
+    KnownReadOnlyCommand,
+    /// LLM declared a `claimed_risk` higher than the classifier's verdict.
+    /// The higher value was taken; this flag records that the model contributed.
+    ModelClaimedRisk,
+    /// LLM declared a `claimed_risk` lower than the classifier's verdict.
+    /// The classifier value was kept; this flag records the disagreement
+    /// for offline review.
+    ModelDisagreesOnRisk,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

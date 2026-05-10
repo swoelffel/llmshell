@@ -14,6 +14,16 @@ struct Args {
     args: Vec<String>,
     cwd: Option<String>,
     timeout_ms: Option<u64>,
+    /// One-line natural-language description of WHY this command is run.
+    /// Audit-only; surfaced in the confirmation prompt.
+    #[serde(default)]
+    #[allow(dead_code)]
+    intent: Option<String>,
+    /// LLM's own estimate of the risk level — used as an upgrade-only hint
+    /// by the policy engine.
+    #[serde(default)]
+    #[allow(dead_code)]
+    claimed_risk: Option<String>,
 }
 
 pub struct RunProcess;
@@ -33,12 +43,21 @@ the `glob` tool first and pass the resolved paths as separate args."
         json!({
             "type":"object",
             "properties": {
+                "intent": {
+                    "type":"string",
+                    "description":"One-line description of WHY this command is run. Required. Write this BEFORE program/args so you reread the goal as you build the command."
+                },
+                "claimed_risk": {
+                    "type":"string",
+                    "enum": ["read_only","low","write","destructive","network","privileged","unknown"],
+                    "description":"Your honest estimate of the risk this command poses. The engine only uses this to RAISE risk, never to lower it — declaring read_only does not skip confirmation."
+                },
                 "program": {"type":"string"},
                 "args": {"type":"array","items":{"type":"string"}},
                 "cwd": {"type":"string"},
                 "timeout_ms": {"type":"integer","minimum":1}
             },
-            "required":["program"],
+            "required":["intent","claimed_risk","program"],
             "additionalProperties": false
         })
     }
