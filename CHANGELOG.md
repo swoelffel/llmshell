@@ -4,6 +4,25 @@ All notable changes to LLMShell are documented here. Format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Security (v0.2.8 — security hardening)
+
+- New `llmsh-redact` crate centralises secret-pattern catalogue and engine.
+  `llmsh-audit::redact` and `llmsh-core::llm_redact` are now thin façades
+  over it, eliminating three previously parallel pattern lists.
+- Extended pattern catalogue: OpenAI/Anthropic/GCP/AWS/GitHub/Databricks/
+  HuggingFace/Replicate/Slack keys, JWT, Bearer tokens, PEM private keys,
+  `.env`-style `*_KEY=…`/`*_PASSWORD=…` lines.
+- OpenAI provider stores the API key inside `secrecy::SecretString`:
+  no longer leaks in `Debug` output and is zeroed on drop.
+- OpenAI HTTP error bodies pass through the redactor before being
+  bubbled up to logs (some error responses echo request fragments).
+- SQLite memory persistence redacts message content before insertion;
+  previously `.env` reads or token-bearing tool outputs were stored
+  verbatim.
+- Policy `extract_shell_payload` accepts `bash -c PAYLOAD pos1 pos2…`
+  (extra positional args after the payload), closing a gap where
+  appending an argv tail let invocations skip read-only classification.
+
 ### Added
 
 - Per-turn `SessionStats` tracked in the agent loop.
