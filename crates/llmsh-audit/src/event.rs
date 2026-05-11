@@ -6,7 +6,10 @@ use serde_json::Value;
 // v3: added ContextCompacted variant
 // v4: added ContextCleared and FactAdded variants
 // v5: added ContextCompacted.stage_b_outcome / stage_b_error
-pub const SCHEMA_VERSION: u32 = 5;
+// v6: events are wrapped in ChainedEvent envelope (seq, prev_digest, digest);
+//     legacy v5 files remain readable as plain JSONL but cannot be
+//     chain-verified.
+pub const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
