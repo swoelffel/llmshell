@@ -266,6 +266,7 @@ impl Memory {
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("memory mutex poisoned"))?;
+        let redacted_content = crate::llm_redact::redact_for_llm(&m.content);
         conn.execute(
             "INSERT INTO conversation_messages \
              (ts, role, content, tool_call_id, name, tool_calls_json, insert_source) \
@@ -273,7 +274,7 @@ impl Memory {
             params![
                 m.ts,
                 m.role,
-                m.content,
+                redacted_content,
                 m.tool_call_id,
                 m.name,
                 m.tool_calls_json,
@@ -718,6 +719,23 @@ mod tests {
     // -----------------------------------------------------------------------
     // v0.2.6 new tests
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn append_message_redacts_secrets_before_persist() {
+        let m = Memory::open_in_memory().unwrap();
+        m.append_message(&make_msg(
+            "user",
+            "ANTHROPIC_API_KEY=sk-ant-api03-AAAAAAAAAAAAAAAAAAAA",
+        ))
+        .unwrap();
+        let msgs = m.load_active_conversation().unwrap();
+        let stored = &msgs[0].content;
+        assert!(
+            stored.contains("[REDACTED:"),
+            "expected redaction marker, got: {stored}"
+        );
+        assert!(!stored.contains("sk-ant-api03-AAAA"));
+    }
 
     #[test]
     fn append_and_load_active_conversation_roundtrip() {
