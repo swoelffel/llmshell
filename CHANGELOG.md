@@ -2,6 +2,20 @@
 
 All notable changes to LLMShell are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches v1.0.
 
+## [Unreleased]
+
+### Security — audit chain
+
+- The audit JSONL is now tamper-evident: every line carries `seq`,
+  `prev_digest`, and its own SHA-256 `digest` (envelope schema v6).
+  The README's "SHA-256 chained" claim is now matched by the
+  implementation.
+- New `llmsh_audit::verify_chain` API and `llmsh verify-audit <path>`
+  CLI subcommand walk the chain and report sealed / unsealed /
+  broken-at-line outcomes.
+- v5 audit files remain readable as plain JSONL but cannot be
+  chain-verified (verifier returns `SchemaTooOld`).
+
 ## [0.2.13] — 2026-05-11
 
 ### Security — hardening pass

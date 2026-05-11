@@ -16,18 +16,29 @@ Override with the `audit.directory` field in the user config (`~/.config/llmsh/c
 
 ## Wire format
 
-Each line is a single JSON object:
+Each line is a `ChainedEvent` envelope: `schema_version`, `seq`, `prev_digest`, the event payload (flattened so `type` stays at the top level), and `digest`.
 
 ```json
-{ "type": "tool_execution_start", "ts": "2026-05-08T10:21:33Z", "plan_id": "…", "step_id": "…", "tool": "read_file", "args_digest": "sha256:…", "digest": "sha256:…" }
+{ "schema_version": 6, "seq": 12, "prev_digest": "…", "type": "tool_execution_start", "ts": "2026-05-08T10:21:33Z", "plan_id": "…", "step_id": "…", "tool": "read_file", "args_digest": "sha256:…", "digest": "…" }
 ```
 
+- `schema_version` — current chain envelope version (v6).
+- `seq` — monotonic per-session counter starting at 0.
+- `prev_digest` — hex SHA-256 of the previous line's `digest`, or the session-seed digest for `seq == 0`.
 - `type` — the variant tag (`#[serde(tag = "type", rename_all = "snake_case")]`).
 - `ts` — RFC 3339 UTC timestamp.
 - variant-specific fields.
-- `digest` — hash of this line plus the previous line's digest, forming the chain.
+- `digest` — hex SHA-256 over the canonical JSON of the envelope minus the `digest` field itself.
 
-Schema version is exposed as `SCHEMA_VERSION` in [`crates/llmsh-audit/src/event.rs`](../crates/llmsh-audit/src/event.rs). Current value: `4`.
+Schema version is exposed as `SCHEMA_VERSION` in [`crates/llmsh-audit/src/event.rs`](../crates/llmsh-audit/src/event.rs). Current value: `6`.
+
+## Chain verification
+
+```bash
+llmsh verify-audit ~/.llmsh/sessions/<session>.jsonl
+```
+
+Or programmatically: `llmsh_audit::verify_chain(jsonl, session_id)` returns `VerifiedChain { events, sealed }`. A chain that ends in `session_ended` is **sealed**; one that doesn't is **unsealed** (truncated or writer crashed); any mismatch surfaces as a typed `ChainError` pointing to the first inconsistent line. v5 audit files remain readable as plain JSONL but cannot be chain-verified (verifier returns `SchemaTooOld`).
 
 ## Event taxonomy
 
