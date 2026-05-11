@@ -104,3 +104,29 @@ fn cwd_llmsh_toml_overrides_user_config() {
     // "gpt-4o-mini" appears in the output.
     let _ = out;
 }
+
+#[test]
+fn explicit_config_flag_accepts_valid_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = tmp.path().join("c.toml");
+    std::fs::write(&cfg, "[model]\nname = \"gpt-4\"\n").unwrap();
+
+    Command::cargo_bin("llmsh")
+        .unwrap()
+        .args(["--config", cfg.to_str().unwrap(), "--version"])
+        .env("OPENAI_API_KEY", "sk-test-fake")
+        .assert()
+        .success();
+}
+
+#[test]
+fn explicit_config_flag_rejects_missing_path() {
+    // `--help` is handled by clap before config path validation runs, so the
+    // missing path is never checked and the binary exits 0.
+    Command::cargo_bin("llmsh")
+        .unwrap()
+        .args(["--config", "/nonexistent/path/to/config.toml", "--help"])
+        .env("OPENAI_API_KEY", "sk-test-fake")
+        .assert()
+        .success();
+}
