@@ -26,6 +26,8 @@ const ALWAYS_SAFE: &[&str] = &[
     "readlink",
     "basename",
     "dirname",
+    "findmnt",
+    "mountpoint",
     // Pure read of stdout
     "cat",
     "head",
@@ -47,6 +49,9 @@ const ALWAYS_SAFE: &[&str] = &[
     "type",
     "command",
     "where",
+    "nproc",
+    "arch",
+    "getent",
     // Process inspection (no kill/-signal)
     "ps",
     "pgrep",
@@ -60,6 +65,25 @@ const ALWAYS_SAFE: &[&str] = &[
     "csrutil",
     "vm_stat",
     "iostat",
+    // Linux hardware / system inspection
+    "lscpu",
+    "lsmem",
+    "lsblk",
+    "lspci",
+    "lsusb",
+    "lshw",
+    "lsmod",
+    "lsipc",
+    "lsns",
+    "free",
+    // Distro package query (mutation-free tools, distinct from `dpkg`/`rpm`
+    // which have install/remove subcommands).
+    "dpkg-query",
+    // Security audit scanners (no mutations to the host)
+    "apparmor_status",
+    "aa-status",
+    "chkrootkit",
+    "rkhunter",
     // Login records / active users
     "last",
     "w",
@@ -410,6 +434,51 @@ mod tests {
         }
         assert_eq!(
             is_read_only_invocation("ls", &s(&["-la", "/tmp"])),
+            Some(RiskLevel::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn linux_hardware_inspection_is_read_only() {
+        for prog in [
+            "lscpu",
+            "lsmem",
+            "lsblk",
+            "lspci",
+            "lsusb",
+            "lshw",
+            "lsmod",
+            "lsipc",
+            "lsns",
+            "free",
+            "dpkg-query",
+            "apparmor_status",
+            "aa-status",
+            "chkrootkit",
+            "rkhunter",
+            "findmnt",
+            "mountpoint",
+            "nproc",
+            "arch",
+            "getent",
+        ] {
+            assert_eq!(
+                is_read_only_invocation(prog, &s(&[])),
+                Some(RiskLevel::ReadOnly),
+                "expected {prog} to be read-only"
+            );
+        }
+        // common flag combinations seen in audits
+        assert_eq!(
+            is_read_only_invocation("free", &s(&["-h"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("lsblk", &s(&["-f"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("dpkg-query", &s(&["-l"])),
             Some(RiskLevel::ReadOnly)
         );
     }
