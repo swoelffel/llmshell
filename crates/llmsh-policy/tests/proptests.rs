@@ -56,6 +56,22 @@ fn argv_with_metachar() -> impl Strategy<Value = (String, Vec<String>)> {
 }
 
 proptest! {
+    /// Classification must be deterministic: same argv → same result.
+    /// Non-determinism would make audit logs unreliable.
+    #[test]
+    fn classification_is_deterministic(
+        argv in prop::collection::vec(safe_token(), 1..6)
+    ) {
+        prop_assume!(!argv.is_empty());
+        let program = &argv[0];
+        let args = &argv[1..];
+        let a1 = is_read_only_invocation(program, args);
+        let a2 = is_read_only_invocation(program, args);
+        prop_assert_eq!(a1, a2);
+    }
+}
+
+proptest! {
     /// An argv that contains a raw shell metachar inside an argument must NOT
     /// be classified as `ReadOnly` by `is_read_only_invocation`. Either the
     /// function rejects the arg (returns `None` → falls through to `Unknown`
