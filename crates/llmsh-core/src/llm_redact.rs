@@ -1,3 +1,9 @@
+//! Redaction at the LLM boundary — delegates to `llmsh_redact`.
+//!
+//! Applied to outbound prompts/tool outputs that would otherwise leak local
+//! secrets into the model context.
+
+use llmsh_redact::{default_patterns, PatternDef};
 use regex::Regex;
 
 pub struct LlmRedactor {
@@ -6,32 +12,23 @@ pub struct LlmRedactor {
 
 impl Default for LlmRedactor {
     fn default() -> Self {
-        // Stricter than audit (LLM output is exfiltrated to a third party).
-        let raw = [
-            ("openai_key", r"sk-[A-Za-z0-9]{20,}"),
-            ("anthropic_key", r"sk-ant-[A-Za-z0-9-]{20,}"),
-            ("github_token", r"gh[pousr]_[A-Za-z0-9]{20,}"),
-            ("aws_access_key", r"AKIA[0-9A-Z]{16}"),
-            ("gcp_key", r"AIza[0-9A-Za-z_\-]{20,}"),
-            (
-                "jwt",
-                r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
-            ),
-            ("bearer_token", r"Bearer\s+[A-Za-z0-9._\-]{20,}"),
-            (
-                "pem_private_key",
-                r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
-            ),
-        ];
-        let patterns = raw
-            .iter()
-            .map(|(n, p)| (n.to_string(), Regex::new(p).unwrap()))
-            .collect();
-        Self { patterns }
+        Self::from_defs(&default_patterns())
     }
 }
 
 impl LlmRedactor {
+    fn from_defs(defs: &[PatternDef]) -> Self {
+        let patterns = defs
+            .iter()
+            .map(|d| {
+                let re = Regex::new(d.regex)
+                    .unwrap_or_else(|e| panic!("redact pattern {} invalid: {e}", d.name));
+                (d.name.to_string(), re)
+            })
+            .collect();
+        Self { patterns }
+    }
+
     pub fn redact(&self, s: &str) -> (String, usize) {
         let mut hits = 0;
         let mut out = s.to_string();
@@ -52,5 +49,28 @@ impl LlmRedactor {
         } else {
             (format!("{}…[truncated]", &s[..max]), true)
         }
+    }
+}
+
+/// Convenience free function used at the persistence and HTTP-error boundaries.
+pub fn redact_for_llm(input: &str) -> String {
+    LlmRedactor::default().redact(input).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_dotenv() {
+        let out = redact_for_llm("API_TOKEN=abc123def456");
+        assert!(out.contains("[REDACTED:dotenv_secret]"));
+    }
+
+    #[test]
+    fn idempotent() {
+        let s = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAA";
+        let once = redact_for_llm(s);
+        assert_eq!(once, redact_for_llm(&once));
     }
 }

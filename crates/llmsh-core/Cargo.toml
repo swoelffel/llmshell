@@ -38,6 +38,7 @@ llmsh-llm = { path = "../llmsh-llm" }
 llmsh-tools = { path = "../llmsh-tools" }
 llmsh-policy = { path = "../llmsh-policy" }
 llmsh-audit = { path = "../llmsh-audit" }
+llmsh-redact = { path = "../llmsh-redact" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

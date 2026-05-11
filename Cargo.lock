@@ -1032,6 +1032,7 @@ dependencies = [
  "llmsh-audit",
  "llmsh-llm",
  "llmsh-policy",
+ "llmsh-redact",
  "llmsh-tools",
  "nu-ansi-term",
  "reedline",
