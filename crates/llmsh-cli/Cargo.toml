@@ -33,3 +33,8 @@ llmsh-llm-ollama = { path = "../llmsh-llm-ollama" }
 llmsh-policy = { path = "../llmsh-policy" }
 llmsh-tools = { path = "../llmsh-tools" }
 reedline = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = { workspace = true }
