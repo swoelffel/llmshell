@@ -1,10 +1,14 @@
+pub mod chain;
 pub mod digest;
 pub mod event;
 pub mod redact;
 pub mod session;
+pub mod verify;
 pub mod writer;
+pub use chain::{build_envelope, session_seed_digest, ChainedEvent, CHAIN_SCHEMA_VERSION};
 pub use digest::*;
 pub use event::*;
 pub use redact::*;
 pub use session::*;
+pub use verify::{verify_chain, ChainError, VerifiedChain};
 pub use writer::*;

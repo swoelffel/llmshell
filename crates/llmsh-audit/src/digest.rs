@@ -40,6 +40,17 @@ fn canonicalize(v: &Value) -> String {
     }
 }
 
+/// Like `canonical_json_digest`, but with the top-level `field` removed first.
+/// Used by the chain to compute a line's `digest` over the envelope minus the
+/// `digest` field itself.
+pub fn digest_excluding(v: &serde_json::Value, field: &str) -> String {
+    let mut clone = v.clone();
+    if let Some(obj) = clone.as_object_mut() {
+        obj.remove(field);
+    }
+    canonical_json_digest(&clone)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +61,21 @@ mod tests {
         let a = json!({"a":1,"b":2});
         let b = json!({"b":2,"a":1});
         assert_eq!(canonical_json_digest(&a), canonical_json_digest(&b));
+    }
+
+    #[test]
+    fn digest_excluding_skips_named_field() {
+        let with = serde_json::json!({ "a": 1, "b": 2, "skip_me": "anything" });
+        let without = serde_json::json!({ "a": 1, "b": 2 });
+        assert_eq!(
+            digest_excluding(&with, "skip_me"),
+            canonical_json_digest(&without),
+        );
+    }
+
+    #[test]
+    fn digest_excluding_noop_when_field_absent() {
+        let v = serde_json::json!({ "a": 1, "b": 2 });
+        assert_eq!(digest_excluding(&v, "missing"), canonical_json_digest(&v),);
     }
 }
