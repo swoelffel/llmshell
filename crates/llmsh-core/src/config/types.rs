@@ -266,7 +266,7 @@ impl Config {
             },
             limits: LimitsConfig {
                 max_iterations: 5,
-                max_tool_calls_per_iteration: 5,
+                max_tool_calls_per_iteration: 32,
                 max_schema_repair_attempts: 2,
                 max_llm_output_bytes: 4096,
                 max_audit_output_bytes: 65536,

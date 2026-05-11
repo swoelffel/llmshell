@@ -5,6 +5,11 @@ use serde_json::Value;
 
 pub trait ConfirmationGate: Send + Sync {
     fn ask(&self, plan: &CheckedPlan) -> bool;
+    /// Asked when the model emits more tool calls than `max_tool_calls_per_iteration`.
+    /// Default refuses; interactive gates should prompt the user.
+    fn ask_overflow(&self, _requested: usize, _limit: u32) -> bool {
+        false
+    }
 }
 
 pub struct StdinConfirmationGate;
@@ -59,12 +64,31 @@ impl ConfirmationGate for StdinConfirmationGate {
         }
         true
     }
+
+    fn ask_overflow(&self, requested: usize, limit: u32) -> bool {
+        println!(
+            "⚠ Le modèle a demandé {} appels d'outils en un tour (limite: {}).",
+            requested, limit
+        );
+        print!("Exécuter quand même ? [Y/n] ");
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            return false;
+        }
+        let s = line.trim().to_lowercase();
+        s.is_empty() || s == "y" || s == "yes" || s == "o" || s == "oui"
+    }
 }
 
 pub struct AlwaysYesGate;
 impl ConfirmationGate for AlwaysYesGate {
     fn ask(&self, plan: &CheckedPlan) -> bool {
         !plan.has_deny()
+    }
+    fn ask_overflow(&self, _requested: usize, _limit: u32) -> bool {
+        true
     }
 }
 

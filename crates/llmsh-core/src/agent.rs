@@ -269,16 +269,29 @@ impl AgentLoop {
                 }
                 FinishReason::ToolCalls => {
                     if resp.tool_calls.len() > dep.bounds.max_tool_calls_per_iteration as usize {
+                        let requested = resp.tool_calls.len();
+                        let limit = dep.bounds.max_tool_calls_per_iteration;
+                        let granted = dep.gate.ask_overflow(requested, limit);
                         let _ = dep.audit.lock().unwrap().write(&AuditEvent::Error {
                             ts: now_iso(),
                             code: "too_many_tool_calls".into(),
-                            message: "model requested too many tool calls".into(),
+                            message: format!(
+                                "model requested {} tool calls (limit {}) — user {}",
+                                requested,
+                                limit,
+                                if granted { "approved" } else { "denied" }
+                            ),
                             context_redacted: None,
                         });
-                        return Ok(LoopResult {
-                            assistant_text: None,
-                            stopped_reason: "too_many_tool_calls".into(),
-                        });
+                        if !granted {
+                            return Ok(LoopResult {
+                                assistant_text: Some(format!(
+                                    "Action annulée : le modèle a demandé {} appels d'outils en un seul tour (limite : {}).",
+                                    requested, limit
+                                )),
+                                stopped_reason: "too_many_tool_calls".into(),
+                            });
+                        }
                     }
 
                     // Snapshot the assistant turn so the wire payload includes
