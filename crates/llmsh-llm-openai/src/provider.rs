@@ -5,13 +5,24 @@ use async_trait::async_trait;
 use llmsh_llm::capabilities::{Capabilities, ToolCallingMode};
 use llmsh_llm::provider::LlmProvider;
 use llmsh_llm::types::{LlmRequest, LlmResponse, ModelInfo};
+use secrecy::{ExposeSecret, SecretString};
 use std::sync::{Arc, RwLock};
 
 pub struct OpenAIProvider {
     base_url: String,
-    api_key: String,
+    api_key: SecretString,
     model: Arc<RwLock<String>>,
     http: reqwest::Client,
+}
+
+impl std::fmt::Debug for OpenAIProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAIProvider")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 pub struct OpenAIConfig {
@@ -28,7 +39,7 @@ impl OpenAIProvider {
             .build()?;
         Ok(Self {
             base_url: cfg.base_url,
-            api_key: cfg.api_key,
+            api_key: SecretString::new(cfg.api_key),
             model: Arc::new(RwLock::new(cfg.model)),
             http,
         })
@@ -84,7 +95,7 @@ impl LlmProvider for OpenAIProvider {
         let resp = self
             .http
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.expose_secret())
             .json(&body)
             .send()
             .await?;
@@ -102,7 +113,7 @@ impl LlmProvider for OpenAIProvider {
         let resp = self
             .http
             .get(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.expose_secret())
             .send()
             .await?
             .error_for_status()?;
@@ -160,6 +171,22 @@ mod tests {
         let p = make_provider("gpt-4o-mini");
         p.set_model("gpt-4o").await.unwrap();
         assert_eq!(p.current_model(), "gpt-4o");
+    }
+
+    #[test]
+    fn debug_does_not_leak_api_key() {
+        let p = OpenAIProvider::new(OpenAIConfig {
+            base_url: "https://api.openai.com/v1".into(),
+            api_key: "sk-proj-SECRET12345".into(),
+            model: "gpt-4".into(),
+            timeout_ms: 5000,
+        })
+        .unwrap();
+        let dbg = format!("{:?}", p);
+        assert!(
+            !dbg.contains("sk-proj-SECRET12345"),
+            "debug leaks api key: {dbg}"
+        );
     }
 
     #[test]
