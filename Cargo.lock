@@ -988,6 +988,7 @@ version = "0.2.13-dev"
 dependencies = [
  "anyhow",
  "chrono",
+ "llmsh-redact",
  "regex",
  "serde",
  "serde_json",

@@ -17,6 +17,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 regex = { workspace = true }
+llmsh-redact = { path = "../llmsh-redact" }
 chrono = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }

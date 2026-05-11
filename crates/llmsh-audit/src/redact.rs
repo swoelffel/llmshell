@@ -1,3 +1,10 @@
+//! Audit redaction façade — delegates to `llmsh_redact`.
+//!
+//! Preserves the legacy `Redactor::default_audit()` + `redact(&str) -> (String, usize)`
+//! API so call-sites compile unchanged. Internal patterns are now the canonical
+//! set from `llmsh-redact`.
+
+use llmsh_redact::{default_patterns, PatternDef};
 use regex::Regex;
 
 pub struct Redactor {
@@ -6,24 +13,17 @@ pub struct Redactor {
 
 impl Redactor {
     pub fn default_audit() -> Self {
-        let raw = [
-            ("openai_key", r"sk-[A-Za-z0-9]{20,}"),
-            ("anthropic_key", r"sk-ant-[A-Za-z0-9-]{20,}"),
-            ("github_token", r"gh[pousr]_[A-Za-z0-9]{20,}"),
-            ("aws_access_key", r"AKIA[0-9A-Z]{16}"),
-            (
-                "jwt",
-                r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
-            ),
-            ("bearer_token", r"Bearer\s+[A-Za-z0-9._\-]{20,}"),
-            (
-                "pem_private_key",
-                r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
-            ),
-        ];
-        let patterns = raw
+        Self::from_defs(&default_patterns())
+    }
+
+    fn from_defs(defs: &[PatternDef]) -> Self {
+        let patterns = defs
             .iter()
-            .map(|(n, p)| (n.to_string(), Regex::new(p).expect("regex")))
+            .map(|d| {
+                let re = Regex::new(d.regex)
+                    .unwrap_or_else(|e| panic!("redact pattern {} invalid: {e}", d.name));
+                (d.name.to_string(), re)
+            })
             .collect();
         Self { patterns }
     }
