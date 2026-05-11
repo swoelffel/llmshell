@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use clap::Parser;
 use llmsh_audit::event::{now_iso, AuditEvent};
 use llmsh_audit::redact::Redactor;
@@ -43,6 +44,20 @@ struct Cli {
     /// Verbose output: -v = tier 1, -vv = tier 1 + tier 2.
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     verbose: u8,
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Cmd {
+    /// Verify the hash chain of an audit log.
+    VerifyAudit {
+        /// Path to the .jsonl audit file.
+        path: PathBuf,
+        /// Session id used to seed the chain. Defaults to the file stem.
+        #[arg(long)]
+        session_id: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -54,6 +69,34 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     let cli = Cli::parse();
+
+    if let Some(Cmd::VerifyAudit { path, session_id }) = cli.cmd {
+        let sid = session_id.unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string()
+        });
+        let jsonl =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        match llmsh_audit::verify_chain(&jsonl, &sid) {
+            Ok(v) if v.sealed => {
+                println!("OK: {} events, sealed (session_ended present).", v.events);
+                return Ok(());
+            }
+            Ok(v) => {
+                println!(
+                    "OK (unsealed): {} events, no session_ended — file is internally consistent but may have been truncated or the writer crashed.",
+                    v.events
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("FAIL: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
 
     // 1. Load config
     let cfg_path = user_config_path(cli.config.as_deref())
