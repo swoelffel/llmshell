@@ -71,3 +71,36 @@ fn writes_default_config_on_first_launch() {
         );
     }
 }
+
+#[test]
+#[ignore = "needs `llmsh config show` subcommand to assert resolved config"]
+fn cwd_llmsh_toml_overrides_user_config() {
+    // TODO: add a `llmsh config show` subcommand so this test can assert that
+    // the project-local .llmsh.toml model name overrides the user config model.
+    let tmp = tempfile::tempdir().unwrap();
+    let user_cfg = tmp.path().join("user.toml");
+    std::fs::write(&user_cfg, "[model]\nname = \"gpt-4\"\n").unwrap();
+
+    let proj = tempfile::tempdir().unwrap();
+    std::fs::write(
+        proj.path().join(".llmsh.toml"),
+        "[model]\nname = \"gpt-4o-mini\"\n",
+    )
+    .unwrap();
+
+    let out = Command::cargo_bin("llmsh")
+        .unwrap()
+        .current_dir(proj.path())
+        .env("LLMSH_CONFIG", &user_cfg)
+        .env("LLMSH_VERBOSE", "2")
+        .env("LLMSH_NO_AUTOINIT", "1")
+        .env("OPENAI_API_KEY", "sk-test-fake")
+        .arg("--help")
+        .output()
+        .unwrap();
+
+    // No assertion yet: --help output does not reveal the resolved model.
+    // Once `llmsh config show` exists, replace this with a check that
+    // "gpt-4o-mini" appears in the output.
+    let _ = out;
+}
