@@ -6,3 +6,7 @@
 
 # Personal Claude Code settings (hooks, tool permissions)
 .claude/settings.local.json
+
+# cargo-fuzz build output and crash artifacts (corpus is intentionally tracked)
+crates/*/fuzz/target/
+crates/*/fuzz/artifacts/

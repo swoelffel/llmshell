@@ -11,6 +11,10 @@ members = [
     "crates/llmsh-core",
     "crates/llmsh-cli",
 ]
+exclude = [
+    "crates/llmsh-policy/fuzz",
+    "crates/llmsh-redact/fuzz",
+]
 
 [workspace.package]
 version = "0.2.15-dev"
