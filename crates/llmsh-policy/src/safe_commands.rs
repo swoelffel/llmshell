@@ -183,7 +183,10 @@ fn extract_shell_payload(program: &str, args: &[String]) -> Option<(String, Vec<
     if !SHELLS.contains(&program) {
         return None;
     }
-    if args.len() != 2 || args[0] != "-c" {
+    // Accept `-c PAYLOAD [positional...]`: anything after PAYLOAD becomes
+    // `$0`, `$1`, ... inside the body. Classification is driven by PAYLOAD
+    // itself, which we still scan for metacharacters below.
+    if args.len() < 2 || args[0] != "-c" {
         return None;
     }
     let payload = &args[1];
@@ -1130,13 +1133,39 @@ mod tests {
 
     #[test]
     fn deshell_only_dash_c_form() {
-        // Wrong arg shape: not exactly ["-c", payload].
+        // Wrong arg shape: must start with -c PAYLOAD.
         assert_eq!(is_read_only_invocation("bash", &s(&["ls"])), None);
+        assert_eq!(is_read_only_invocation("bash", &s(&["-c"])), None);
         assert_eq!(
-            is_read_only_invocation("bash", &s(&["-c", "ls", "extra"])),
+            is_read_only_invocation("bash", &s(&["-x", "script.sh"])),
             None
         );
-        assert_eq!(is_read_only_invocation("bash", &s(&["-c"])), None);
+    }
+
+    #[test]
+    fn deshell_handles_bash_c_with_extra_positional_args() {
+        // `bash -c PAYLOAD arg0 arg1` — positionals become $0,$1 inside the
+        // body; classification still drives off PAYLOAD itself.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls -la", "script_name", "extra"])),
+            Some(RiskLevel::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn deshell_supports_sh_dash_c() {
+        assert_eq!(
+            is_read_only_invocation("sh", &s(&["-c", "pwd"])),
+            Some(RiskLevel::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn deshell_supports_zsh_dash_c() {
+        assert_eq!(
+            is_read_only_invocation("zsh", &s(&["-c", "ls"])),
+            Some(RiskLevel::ReadOnly)
+        );
     }
 
     #[test]
