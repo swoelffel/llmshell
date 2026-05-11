@@ -1084,6 +1084,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "llmsh-llm",
+ "llmsh-redact",
  "reqwest",
  "secrecy",
  "serde",

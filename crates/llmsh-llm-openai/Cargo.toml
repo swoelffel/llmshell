@@ -21,6 +21,7 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 llmsh-llm = { path = "../llmsh-llm" }
 secrecy = "0.8"
+llmsh-redact = { path = "../llmsh-redact" }
 
 [dev-dependencies]
 wiremock = "0.6"

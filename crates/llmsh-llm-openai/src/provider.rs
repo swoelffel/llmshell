@@ -102,7 +102,7 @@ impl LlmProvider for OpenAIProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("openai http {}: {}", status, text);
+            anyhow::bail!("{}", format_http_error(status.as_u16(), &text));
         }
         let parsed: ChatResponse = resp.json().await?;
         parse_response(parsed)
@@ -143,6 +143,24 @@ impl LlmProvider for OpenAIProvider {
             .read()
             .map(|g| g.clone())
             .unwrap_or_else(|_| "unknown".into())
+    }
+}
+
+fn format_http_error(status: u16, body: &str) -> String {
+    let redacted = llmsh_redact::Redactor::default().redact(body);
+    format!("openai http {status}: {redacted}")
+}
+
+#[cfg(test)]
+mod error_format_tests {
+    use super::*;
+
+    #[test]
+    fn redacts_secret_in_error_body() {
+        let body = r#"{"error":"bad token sk-proj-abcDEF1234567890abcDEF1234567890abcDEF12"}"#;
+        let out = format_http_error(401, body);
+        assert!(out.contains("[REDACTED:openai_key]"));
+        assert!(!out.contains("sk-proj-abcDEF"));
     }
 }
 
