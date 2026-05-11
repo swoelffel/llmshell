@@ -1,0 +1,19 @@
+[package]
+name = "llmsh-redact-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+once_cell = "1"
+llmsh-redact = { path = ".." }
+
+[[bin]]
+name = "redactor"
+path = "fuzz_targets/redactor.rs"
+test = false
+doc = false
