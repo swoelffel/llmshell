@@ -45,6 +45,17 @@ cargo clippy --workspace --all-targets -- -D warnings   # CI gate (warnings = fa
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs fmt + clippy + tests on Linux and tests on macOS. Match it locally before pushing.
 
+### Couverture chiffrée
+
+```bash
+cargo install cargo-llvm-cov --locked   # une fois
+cargo llvm-cov --workspace --summary-only             # rapport texte
+cargo llvm-cov --workspace --html --output-dir cov    # rapport HTML
+open cov/html/index.html                              # macOS
+```
+
+La CI ([.github/workflows/coverage.yml](.github/workflows/coverage.yml)) applique un plancher de 87 % sur `llmsh-policy`, `llmsh-audit` et `llmsh-redact`. Couverture globale visible dans l'artifact `coverage-summary` de chaque PR.
+
 ## Run
 
 ```bash
