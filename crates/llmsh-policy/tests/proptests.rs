@@ -72,6 +72,28 @@ proptest! {
 }
 
 proptest! {
+    /// If `cmd` (no args) is classified ReadOnly, adding `--help` (a recognised
+    /// help flag) must keep it ReadOnly. Help flags never widen risk.
+    /// Catches regressions where a new arg pattern accidentally blocks the
+    /// simplest invocations.
+    #[test]
+    fn help_flag_preserves_read_only_for_safe_commands(
+        cmd in prop::sample::select(vec!["ls", "pwd", "whoami", "uname", "date"])
+    ) {
+        let bare = is_read_only_invocation(cmd, &[]);
+        let with_help = is_read_only_invocation(cmd, &["--help".to_string()]);
+        if bare == Some(RiskLevel::ReadOnly) {
+            prop_assert_eq!(
+                with_help,
+                Some(RiskLevel::ReadOnly),
+                "{} bare was ReadOnly but {} --help was {:?}",
+                cmd, cmd, with_help
+            );
+        }
+    }
+}
+
+proptest! {
     /// An argv that contains a raw shell metachar inside an argument must NOT
     /// be classified as `ReadOnly` by `is_read_only_invocation`. Either the
     /// function rejects the arg (returns `None` → falls through to `Unknown`
