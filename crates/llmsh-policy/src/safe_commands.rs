@@ -214,6 +214,21 @@ pub fn is_read_only_invocation(program: &str, args: &[String]) -> Option<RiskLev
     if program.contains('/') {
         return None;
     }
+
+    // Reject immediately if any argument contains a raw shell metacharacter.
+    // SHELLS are handled separately below via `extract_shell_payload`, which
+    // scans the `-c PAYLOAD` string for metachars itself. For non-shell
+    // programs the OS execvp path is safe IF arguments are clean; an arg like
+    // "inject|payload" would be benign to the OS but indicates an injection
+    // attempt or confused caller — either way it is not provably read-only.
+    if !SHELLS.contains(&program)
+        && args
+            .iter()
+            .any(|a| a.chars().any(|c| SHELL_METACHARS.contains(&c)))
+    {
+        return None;
+    }
+
     if SHELLS.contains(&program) {
         let (inner_prog, inner_args) = extract_shell_payload(program, args)?;
         if SHELLS.contains(&inner_prog.as_str()) || META_EXEC.contains(&inner_prog.as_str()) {
