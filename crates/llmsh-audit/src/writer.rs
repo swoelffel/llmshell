@@ -1,3 +1,4 @@
+use crate::chain::{build_envelope, session_seed_digest};
 use crate::event::AuditEvent;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -7,6 +8,8 @@ pub struct AuditWriter {
     path: PathBuf,
     file: Option<std::fs::File>,
     enabled: bool,
+    seq: u64,
+    last_digest: String,
 }
 
 impl AuditWriter {
@@ -19,6 +22,8 @@ impl AuditWriter {
             path,
             file: Some(file),
             enabled: true,
+            seq: 0,
+            last_digest: session_seed_digest(session_id),
         })
     }
 
@@ -27,6 +32,8 @@ impl AuditWriter {
             path: PathBuf::new(),
             file: None,
             enabled: false,
+            seq: 0,
+            last_digest: String::new(),
         }
     }
 
@@ -34,10 +41,13 @@ impl AuditWriter {
         if !self.enabled {
             return Ok(());
         }
-        let line = serde_json::to_string(ev)?;
+        let (envelope, this_digest) = build_envelope(ev, self.seq, &self.last_digest);
+        let line = serde_json::to_string(&envelope)?;
         if let Some(f) = self.file.as_mut() {
             writeln!(f, "{}", line)?;
         }
+        self.seq = self.seq.saturating_add(1);
+        self.last_digest = this_digest;
         Ok(())
     }
 
@@ -107,5 +117,50 @@ mod tests {
         assert_eq!(m.permissions().mode() & 0o777, 0o600);
         let dm = std::fs::metadata(tmp.path()).unwrap();
         assert_eq!(dm.permissions().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn writes_envelope_with_seq_and_prev_digest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = AuditWriter::open(tmp.path(), "sess-chain").unwrap();
+        w.write(&AuditEvent::SessionEnded {
+            ts: now_iso(),
+            reason: "a".into(),
+        })
+        .unwrap();
+        w.write(&AuditEvent::SessionEnded {
+            ts: now_iso(),
+            reason: "b".into(),
+        })
+        .unwrap();
+        w.flush().unwrap();
+
+        let s = std::fs::read_to_string(tmp.path().join("sess-chain.jsonl")).unwrap();
+        let lines: Vec<&str> = s.lines().collect();
+        assert_eq!(lines.len(), 2);
+
+        let l0: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let l1: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(l0["seq"], 0);
+        assert_eq!(l1["seq"], 1);
+        assert_eq!(l0["schema_version"], 6);
+        assert_eq!(l1["prev_digest"], l0["digest"]);
+        assert_eq!(
+            l0["prev_digest"].as_str().unwrap(),
+            crate::chain::session_seed_digest("sess-chain"),
+        );
+        assert_eq!(l0["type"], "session_ended");
+        assert_eq!(l0["reason"], "a");
+    }
+
+    #[test]
+    fn disabled_writer_does_not_advance_chain() {
+        let mut w = AuditWriter::disabled();
+        w.write(&AuditEvent::SessionEnded {
+            ts: now_iso(),
+            reason: "x".into(),
+        })
+        .unwrap();
+        w.flush().unwrap();
     }
 }
