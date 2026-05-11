@@ -157,10 +157,10 @@ mod error_format_tests {
 
     #[test]
     fn redacts_secret_in_error_body() {
-        let body = r#"{"error":"bad token sk-proj-abcDEF1234567890abcDEF1234567890abcDEF12"}"#;
+        let body = r#"{"error":"bad token sk-proj-EXAMPLE_FIXTURE_NOT_A_REAL_KEY_aaaaaaaaaa"}"#;
         let out = format_http_error(401, body);
         assert!(out.contains("[REDACTED:openai_key]"));
-        assert!(!out.contains("sk-proj-abcDEF"));
+        assert!(!out.contains("sk-proj-EXAMPLE"));
     }
 }
 
@@ -195,14 +195,14 @@ mod tests {
     fn debug_does_not_leak_api_key() {
         let p = OpenAIProvider::new(OpenAIConfig {
             base_url: "https://api.openai.com/v1".into(),
-            api_key: "sk-proj-SECRET12345".into(),
+            api_key: "sk-proj-EXAMPLE_FIXTURE_NOT_REAL_12345".into(),
             model: "gpt-4".into(),
             timeout_ms: 5000,
         })
         .unwrap();
         let dbg = format!("{:?}", p);
         assert!(
-            !dbg.contains("sk-proj-SECRET12345"),
+            !dbg.contains("sk-proj-EXAMPLE_FIXTURE_NOT_REAL_12345"),
             "debug leaks api key: {dbg}"
         );
     }

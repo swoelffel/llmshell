@@ -41,8 +41,8 @@ mod tests {
     #[test]
     fn redacts_openai_key() {
         let r = Redactor::default();
-        let out = r.redact("token=sk-proj-abcDEF1234567890abcDEF1234567890abcDEF12");
-        assert!(!out.contains("sk-proj-abcDEF"));
+        let out = r.redact("token=sk-proj-EXAMPLE_FIXTURE_NOT_A_REAL_KEY_aaaaaaaaaa");
+        assert!(!out.contains("sk-proj-EXAMPLE"));
         assert!(out.contains("[REDACTED:openai_key]"));
     }
 
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn idempotent_on_already_redacted() {
         let r = Redactor::default();
-        let once = r.redact("sk-proj-abcDEF1234567890abcDEF1234567890abcDEF12");
+        let once = r.redact("sk-proj-EXAMPLE_FIXTURE_NOT_A_REAL_KEY_aaaaaaaaaa");
         let twice = r.redact(&once);
         assert_eq!(once, twice);
     }
