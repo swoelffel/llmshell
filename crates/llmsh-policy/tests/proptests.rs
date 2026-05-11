@@ -94,6 +94,24 @@ proptest! {
 }
 
 proptest! {
+    /// A handful of programs are universally destructive enough that *any*
+    /// argv starting with them must NOT be classified as ReadOnly. Tightens
+    /// against future regressions that might add an over-eager "safe
+    /// subcommand" rule.
+    #[test]
+    fn destructive_programs_never_read_only(
+        prog in prop::sample::select(vec!["rm", "dd", "mkfs", "shred", "fdisk"]),
+        rest in prop::collection::vec(safe_token(), 0..5)
+    ) {
+        let result = is_read_only_invocation(prog, &rest);
+        prop_assert!(
+            result != Some(RiskLevel::ReadOnly),
+            "program={:?} args={:?} was classified ReadOnly", prog, rest
+        );
+    }
+}
+
+proptest! {
     /// An argv that contains a raw shell metachar inside an argument must NOT
     /// be classified as `ReadOnly` by `is_read_only_invocation`. Either the
     /// function rejects the arg (returns `None` → falls through to `Unknown`
