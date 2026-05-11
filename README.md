@@ -109,6 +109,16 @@ cargo build --release
 
 Pre-built Linux/macOS binaries, an `install.sh` script and a Homebrew tap are tracked on the [roadmap](ROADMAP.md) for v0.3.
 
+### Reinstalling after a rebuild (macOS gotcha)
+
+When upgrading an existing install, prefer `cargo install --git … --force` or `cargo install --path crates/llmsh-cli --force` rather than `cp target/release/llmsh ~/.cargo/bin/llmsh`. On macOS Sequoia, overwriting the binary in place can keep a cached TCC / launch-services verdict bound to the previous inode — the new binary then dies silently with `zsh: killed llmsh`. If you hit it, the unstick is one line:
+
+```bash
+rm ~/.cargo/bin/llmsh && cp target/release/llmsh ~/.cargo/bin/llmsh
+```
+
+The freshly-created inode resets the cached verdict.
+
 ## Configuration
 
 The user `config.toml` (location depends on OS — see [docs/configuration.md](docs/configuration.md)) controls:
