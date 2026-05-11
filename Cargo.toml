@@ -5,6 +5,7 @@ members = [
     "crates/llmsh-llm-openai",
     "crates/llmsh-llm-ollama",
     "crates/llmsh-policy",
+    "crates/llmsh-redact",
     "crates/llmsh-audit",
     "crates/llmsh-tools",
     "crates/llmsh-core",

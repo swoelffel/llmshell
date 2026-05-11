@@ -1099,6 +1099,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "llmsh-redact"
+version = "0.2.13-dev"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "llmsh-tools"
 version = "0.2.13-dev"
 dependencies = [
