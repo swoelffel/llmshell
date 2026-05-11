@@ -241,6 +241,16 @@ pub fn is_read_only_invocation(program: &str, args: &[String]) -> Option<RiskLev
         "launchctl" => launchctl_args_are_read_only(args),
         "networksetup" => networksetup_args_are_read_only(args),
         "sysctl" => sysctl_args_are_read_only(args),
+        "ip" => ip_args_are_read_only(args),
+        "ss" => ss_args_are_read_only(args),
+        "ufw" => ufw_args_are_read_only(args),
+        "systemctl" => systemctl_args_are_read_only(args),
+        "journalctl" => journalctl_args_are_read_only(args),
+        "iptables" | "ip6tables" => iptables_args_are_read_only(args),
+        "nft" => nft_args_are_read_only(args),
+        "firewall-cmd" => firewall_cmd_args_are_read_only(args),
+        "mount" => mount_args_are_read_only(args),
+        "dmesg" => dmesg_args_are_read_only(args),
         _ => false,
     };
     if safe {
@@ -415,6 +425,196 @@ fn sysctl_args_are_read_only(args: &[String]) -> bool {
         .any(|a| a == "-w" || a == "-p" || a == "-f" || a.contains('='))
 }
 
+/// `ip <object> [show|list|get]` — anything else (add, del, set, change,
+/// replace, flush) mutates network configuration. Leading inert flags
+/// (`-4`, `-6`, `-s`, `-d`, `-h`, `-br`, `-j`/`--json`, `-c`/`--color`,
+/// `-n`/`--netns <name>`) are skipped before the object lookup.
+fn ip_args_are_read_only(args: &[String]) -> bool {
+    const OBJECTS: &[&str] = &[
+        "addr",
+        "a",
+        "address",
+        "route",
+        "r",
+        "ro",
+        "rou",
+        "link",
+        "l",
+        "neigh",
+        "n",
+        "neighbor",
+        "neighbour",
+        "rule",
+        "ru",
+        "maddr",
+        "mroute",
+        "tunnel",
+        "tun",
+        "tcp_metrics",
+        "tcpmetrics",
+        "xfrm",
+    ];
+    let mut iter = args.iter().filter(|a| !a.starts_with('-')).peekable();
+    let Some(object) = iter.next() else {
+        return false;
+    };
+    if !OBJECTS.contains(&object.as_str()) {
+        return false;
+    }
+    // Default action is `show` when omitted (e.g. `ip addr`).
+    let action = iter.next().map(String::as_str).unwrap_or("show");
+    matches!(action, "show" | "list" | "s" | "l" | "ls" | "get" | "g")
+}
+
+/// `ss` is a network socket inspector. The only documented mutating
+/// switch is `-K` / `--kill` (terminates matching sockets); everything
+/// else just queries kernel tables.
+fn ss_args_are_read_only(args: &[String]) -> bool {
+    !args.iter().any(|a| a == "-K" || a == "--kill")
+}
+
+/// `ufw status` / `ufw show <thing>` — anything else (enable, disable,
+/// reset, default, allow, deny, reject, limit, delete, insert, route,
+/// logging, app) mutates firewall state.
+fn ufw_args_are_read_only(args: &[String]) -> bool {
+    let first_pos = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(String::as_str);
+    matches!(first_pos, Some("status") | Some("show"))
+}
+
+/// `systemctl` read-only subcommands. Anything that starts/stops/enables
+/// units mutates and is rejected.
+fn systemctl_args_are_read_only(args: &[String]) -> bool {
+    const READ_ONLY_SUBS: &[&str] = &[
+        "status",
+        "show",
+        "cat",
+        "list-units",
+        "list-unit-files",
+        "list-sockets",
+        "list-timers",
+        "list-jobs",
+        "list-dependencies",
+        "list-machines",
+        "list-automounts",
+        "list-paths",
+        "is-active",
+        "is-enabled",
+        "is-failed",
+        "is-system-running",
+        "get-default",
+        "show-environment",
+    ];
+    let first_pos = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(String::as_str);
+    matches!(first_pos, Some(s) if READ_ONLY_SUBS.contains(&s))
+}
+
+/// `journalctl` is read-only unless invoked with retention/flush flags.
+fn journalctl_args_are_read_only(args: &[String]) -> bool {
+    !args.iter().any(|a| {
+        a == "--rotate"
+            || a == "--flush"
+            || a == "--sync"
+            || a == "--relinquish-var"
+            || a == "--smart-relinquish-var"
+            || a.starts_with("--vacuum-")
+    })
+}
+
+/// `iptables` / `ip6tables` are read-only when *any* listing flag is
+/// present AND no mutating flag is present. A bare invocation requires
+/// a flag, so empty args is rejected.
+fn iptables_args_are_read_only(args: &[String]) -> bool {
+    const MUTATING: &[&str] = &[
+        "-A",
+        "--append",
+        "-D",
+        "--delete",
+        "-I",
+        "--insert",
+        "-R",
+        "--replace",
+        "-F",
+        "--flush",
+        "-X",
+        "--delete-chain",
+        "-Z",
+        "--zero",
+        "-N",
+        "--new-chain",
+        "-P",
+        "--policy",
+        "-E",
+        "--rename-chain",
+    ];
+    if args.iter().any(|a| MUTATING.contains(&a.as_str())) {
+        return false;
+    }
+    args.iter().any(|a| {
+        a == "-L"
+            || a == "--list"
+            || a == "-S"
+            || a == "--list-rules"
+            || a == "-C"
+            || a == "--check"
+            || a.starts_with("-vL")
+            || a.starts_with("-Ln")
+    })
+}
+
+/// `nft list <…>` is read-only; `add`, `delete`, `flush`, `replace`,
+/// `insert`, `create`, `rename`, `reset` mutate.
+fn nft_args_are_read_only(args: &[String]) -> bool {
+    let first_pos = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(String::as_str);
+    matches!(first_pos, Some("list"))
+}
+
+/// `firewall-cmd` is read-only when every flag is a query (`--list-…`,
+/// `--get-…`, `--query-…`, `--info-…`, `--state`). `--permanent` is
+/// inert by itself but commonly pairs with mutating flags, so reject any
+/// args containing it to stay conservative.
+fn firewall_cmd_args_are_read_only(args: &[String]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    if args.iter().any(|a| a == "--permanent") {
+        return false;
+    }
+    args.iter().all(|a| {
+        a == "--state"
+            || a.starts_with("--list-")
+            || a.starts_with("--get-")
+            || a.starts_with("--query-")
+            || a.starts_with("--info-")
+    })
+}
+
+/// Bare `mount` (no positional args) prints the mount table. As soon as
+/// a source or target is passed it tries to mount, which mutates kernel
+/// state.
+fn mount_args_are_read_only(args: &[String]) -> bool {
+    args.is_empty()
+        || args
+            .iter()
+            .all(|a| a == "-l" || a == "-v" || a == "--show-labels")
+}
+
+/// `dmesg` is read-only unless `-c`/`-C`/`--clear`/`--read-clear` is
+/// passed (those clear or read-and-clear the kernel ring buffer).
+fn dmesg_args_are_read_only(args: &[String]) -> bool {
+    !args
+        .iter()
+        .any(|a| a == "-c" || a == "-C" || a == "--clear" || a == "--read-clear")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +681,255 @@ mod tests {
             is_read_only_invocation("dpkg-query", &s(&["-l"])),
             Some(RiskLevel::ReadOnly)
         );
+    }
+
+    #[test]
+    fn ip_subcommand_is_read_only_only_on_show() {
+        for obj in ["addr", "a", "address", "link", "route", "neigh", "rule"] {
+            assert_eq!(
+                is_read_only_invocation("ip", &s(&[obj])),
+                Some(RiskLevel::ReadOnly),
+                "ip {obj} (default action)"
+            );
+            assert_eq!(
+                is_read_only_invocation("ip", &s(&[obj, "show"])),
+                Some(RiskLevel::ReadOnly),
+                "ip {obj} show"
+            );
+        }
+        // Leading inert flags must be skipped.
+        assert_eq!(
+            is_read_only_invocation("ip", &s(&["-4", "addr"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("ip", &s(&["-br", "-c", "link", "show"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        // Mutating subcommands rejected.
+        assert_eq!(
+            is_read_only_invocation("ip", &s(&["addr", "add", "10.0.0.1/24", "dev", "eth0"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("ip", &s(&["link", "set", "eth0", "up"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("ip", &s(&["route", "del", "default"])),
+            None
+        );
+        // Unknown object rejected.
+        assert_eq!(is_read_only_invocation("ip", &s(&["zoinx"])), None);
+    }
+
+    #[test]
+    fn ss_is_read_only_unless_kill() {
+        assert_eq!(
+            is_read_only_invocation("ss", &s(&[])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("ss", &s(&["-tuln"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("ss", &s(&["-K", "state", "all"])),
+            None
+        );
+        assert_eq!(is_read_only_invocation("ss", &s(&["--kill"])), None);
+    }
+
+    #[test]
+    fn ufw_only_status_and_show() {
+        assert_eq!(
+            is_read_only_invocation("ufw", &s(&["status"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("ufw", &s(&["status", "verbose"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("ufw", &s(&["show", "added"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        for sub in ["enable", "disable", "reset", "default", "allow", "deny"] {
+            assert_eq!(
+                is_read_only_invocation("ufw", &s(&[sub])),
+                None,
+                "ufw {sub}"
+            );
+        }
+        assert_eq!(is_read_only_invocation("ufw", &s(&[])), None);
+    }
+
+    #[test]
+    fn systemctl_read_only_subcommands() {
+        for sub in [
+            "status",
+            "show",
+            "cat",
+            "list-units",
+            "list-unit-files",
+            "list-timers",
+            "is-active",
+            "is-enabled",
+            "get-default",
+        ] {
+            assert_eq!(
+                is_read_only_invocation("systemctl", &s(&[sub])),
+                Some(RiskLevel::ReadOnly),
+                "systemctl {sub}"
+            );
+        }
+        assert_eq!(
+            is_read_only_invocation("systemctl", &s(&["status", "ssh"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        for sub in [
+            "start",
+            "stop",
+            "restart",
+            "reload",
+            "enable",
+            "disable",
+            "mask",
+            "set-default",
+        ] {
+            assert_eq!(
+                is_read_only_invocation("systemctl", &s(&[sub, "ssh"])),
+                None,
+                "systemctl {sub} ssh"
+            );
+        }
+    }
+
+    #[test]
+    fn journalctl_read_only_unless_vacuum() {
+        assert_eq!(
+            is_read_only_invocation("journalctl", &s(&[])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("journalctl", &s(&["-u", "ssh", "-n", "50"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("journalctl", &s(&["--vacuum-time=7d"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("journalctl", &s(&["--rotate"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("journalctl", &s(&["--flush"])),
+            None
+        );
+    }
+
+    #[test]
+    fn iptables_list_only() {
+        assert_eq!(
+            is_read_only_invocation("iptables", &s(&["-L"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("iptables", &s(&["-S"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("iptables", &s(&["-L", "-n", "-v"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("ip6tables", &s(&["--list-rules"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        // mutating
+        assert_eq!(
+            is_read_only_invocation("iptables", &s(&["-A", "INPUT", "-j", "DROP"])),
+            None
+        );
+        assert_eq!(is_read_only_invocation("iptables", &s(&["-F"])), None);
+        // bare invocation (no flag) → rejected
+        assert_eq!(is_read_only_invocation("iptables", &s(&[])), None);
+    }
+
+    #[test]
+    fn nft_only_list() {
+        assert_eq!(
+            is_read_only_invocation("nft", &s(&["list", "ruleset"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        for sub in ["add", "delete", "flush", "replace", "insert", "create"] {
+            assert_eq!(
+                is_read_only_invocation("nft", &s(&[sub])),
+                None,
+                "nft {sub}"
+            );
+        }
+    }
+
+    #[test]
+    fn firewall_cmd_query_only() {
+        assert_eq!(
+            is_read_only_invocation("firewall-cmd", &s(&["--state"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("firewall-cmd", &s(&["--list-all"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("firewall-cmd", &s(&["--get-zones"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        // --permanent is conservative-rejected (commonly paired with mutation)
+        assert_eq!(
+            is_read_only_invocation("firewall-cmd", &s(&["--permanent", "--list-all"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("firewall-cmd", &s(&["--add-service=http"])),
+            None
+        );
+    }
+
+    #[test]
+    fn mount_only_bare() {
+        assert_eq!(
+            is_read_only_invocation("mount", &s(&[])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("mount", &s(&["-l"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("mount", &s(&["/dev/sda1", "/mnt"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("mount", &s(&["-o", "ro", "/dev/sda1", "/mnt"])),
+            None
+        );
+    }
+
+    #[test]
+    fn dmesg_read_only_unless_clear() {
+        assert_eq!(
+            is_read_only_invocation("dmesg", &s(&[])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("dmesg", &s(&["-T"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(is_read_only_invocation("dmesg", &s(&["-c"])), None);
+        assert_eq!(is_read_only_invocation("dmesg", &s(&["-C"])), None);
+        assert_eq!(is_read_only_invocation("dmesg", &s(&["--clear"])), None);
     }
 
     #[test]
