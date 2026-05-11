@@ -1,0 +1,40 @@
+name: fuzz-replay
+
+# Replays committed corpora and any regressions found in past runs.
+# Does NOT run full fuzzing in CI (that needs a dedicated long-running job
+# or service like OSS-Fuzz). This is the cheap-but-effective regression net.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Replay policy deshell corpus
+        run: |
+          cd crates/llmsh-policy
+          if [ -d fuzz/corpus/deshell ]; then
+            cargo +nightly fuzz run deshell fuzz/corpus/deshell -- -runs=0
+          else
+            echo "no corpus yet, skipping"
+          fi
+
+      - name: Replay redact idempotence corpus
+        run: |
+          cd crates/llmsh-redact
+          if [ -d fuzz/corpus/redactor ]; then
+            cargo +nightly fuzz run redactor fuzz/corpus/redactor -- -runs=0
+          else
+            echo "no corpus yet, skipping"
+          fi
