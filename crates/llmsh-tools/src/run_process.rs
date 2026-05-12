@@ -4,8 +4,68 @@ use async_trait::async_trait;
 use llmsh_policy::types::RiskLevel;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::io::Read;
+use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
+
+/// Detects the pattern where the LLM wraps a native binary in a shell:
+///     run_process(program="bash", args=["/usr/local/bin/ollama", "list"])
+/// The shell tries to read the binary as a script, fails with exit 126,
+/// and the LLM typically hallucinates Gatekeeper/SIP/perm causes instead
+/// of correcting its own invocation.
+///
+/// Returns `Some(message)` when the pattern is detected, where `message`
+/// is a structured suggestion the LLM can act on at the next turn.
+fn detect_binary_wrapped_in_shell(program: &str, args: &[String]) -> Option<String> {
+    let basename = Path::new(program).file_name().and_then(|s| s.to_str())?;
+    if !matches!(basename, "bash" | "sh" | "zsh" | "dash") {
+        return None;
+    }
+    let first = args.first()?;
+    // args[0] must look like a path — not a flag (-c, -l, …) or bare name.
+    let looks_like_path = first.starts_with('/')
+        || first.starts_with("./")
+        || first.starts_with("../")
+        || first.starts_with("~/")
+        || first.contains('/');
+    if !looks_like_path {
+        return None;
+    }
+    let mut f = std::fs::File::open(Path::new(first)).ok()?;
+    let mut buf = [0u8; 4];
+    let n = f.read(&mut buf).ok()?;
+    if n < 2 {
+        return None;
+    }
+    let head = &buf[..n];
+    let fmt = if head.starts_with(b"\x7FELF") {
+        "ELF"
+    } else if head.starts_with(&[0xCF, 0xFA, 0xED, 0xFE])
+        || head.starts_with(&[0xCE, 0xFA, 0xED, 0xFE])
+        || head.starts_with(&[0xFE, 0xED, 0xFA, 0xCF])
+        || head.starts_with(&[0xFE, 0xED, 0xFA, 0xCE])
+        || head.starts_with(&[0xCA, 0xFE, 0xBA, 0xBE])
+        || head.starts_with(&[0xBE, 0xBA, 0xFE, 0xCA])
+    {
+        "Mach-O"
+    } else if head.starts_with(b"MZ") {
+        "PE"
+    } else {
+        return None;
+    };
+    let rest: Vec<String> = args.iter().skip(1).cloned().collect();
+    let rest_json = serde_json::to_string(&rest).unwrap_or_else(|_| "[]".to_string());
+    Some(format!(
+        "`{shell} {bin}` is a {fmt} binary, not a shell script. \
+{shell} cannot interpret it (exit 126). To execute it, call: \
+run_process(program={bin:?}, args={rest_json})",
+        shell = basename,
+        bin = first,
+        fmt = fmt,
+        rest_json = rest_json,
+    ))
+}
 
 #[derive(Deserialize)]
 struct Args {
@@ -133,6 +193,9 @@ claimed_risk — your honest estimate (the policy may override):\n\
                 }
             })
             .collect();
+        if let Some(msg) = detect_binary_wrapped_in_shell(program.as_ref(), &expanded_args) {
+            anyhow::bail!(msg);
+        }
         cmd.args(&expanded_args);
         if let Some(c) = &a.cwd {
             let expanded = expand_tilde(c, ctx.home.as_deref());
@@ -246,6 +309,90 @@ mod tests {
             .unwrap();
         let want = format!("{}/foo", tmp.path().display());
         assert_eq!(out.stdout.trim(), want);
+    }
+
+    fn write_bytes(path: &std::path::Path, bytes: &[u8]) {
+        use std::io::Write;
+        let mut f = std::fs::File::create(path).unwrap();
+        f.write_all(bytes).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_bash_wrapping_macho_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("fake-ollama");
+        // Mach-O 64-bit LE magic.
+        write_bytes(&bin, &[0xCF, 0xFA, 0xED, 0xFE, 0x07, 0x00, 0x00, 0x01]);
+        let t = RunProcess;
+        let err = t
+            .execute(
+                json!({"program":"bash","args":[bin.to_str().unwrap(),"list"]}),
+                &ctx(),
+            )
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Mach-O"), "msg = {msg}");
+        assert!(msg.contains("exit 126"), "msg = {msg}");
+        assert!(msg.contains(r#"args=["list"]"#), "msg = {msg}");
+    }
+
+    #[tokio::test]
+    async fn rejects_zsh_wrapping_elf_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("fake-elf");
+        write_bytes(&bin, b"\x7FELF\x02\x01\x01\x00");
+        let t = RunProcess;
+        let err = t
+            .execute(
+                json!({"program":"/bin/zsh","args":[bin.to_str().unwrap()]}),
+                &ctx(),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("ELF"));
+    }
+
+    #[tokio::test]
+    async fn allows_bash_running_actual_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("ok.sh");
+        write_bytes(&script, b"#!/bin/sh\necho hello\n");
+        let t = RunProcess;
+        let out = t
+            .execute(
+                json!({"program":"bash","args":[script.to_str().unwrap()]}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert!(out.stdout.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn allows_bash_dash_c() {
+        let t = RunProcess;
+        let out = t
+            .execute(json!({"program":"bash","args":["-c","echo ok"]}), &ctx())
+            .await
+            .unwrap();
+        assert!(out.stdout.contains("ok"));
+    }
+
+    #[tokio::test]
+    async fn allows_non_shell_program_with_path_arg() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("fake-macho");
+        write_bytes(&bin, &[0xCF, 0xFA, 0xED, 0xFE]);
+        // `cat` on a binary is fine — only shells are guarded.
+        let t = RunProcess;
+        let _ = t
+            .execute(
+                json!({"program":"cat","args":[bin.to_str().unwrap()]}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
