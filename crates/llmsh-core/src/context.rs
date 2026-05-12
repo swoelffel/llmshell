@@ -26,7 +26,15 @@ The Runtime context section below describes the current machine state — use it
 When emitting `run_process`, prefer argv direct (program + args). Reserve \
 `bash -c \"…\"` for genuine shell needs (pipes, redirections, variable \
 expansion, compound logic). For glob patterns, call the `glob` tool first \
-and pass concrete paths.";
+and pass concrete paths. \
+The classifier now recognises `bash -c \"A | B | …\"` pipelines and \
+`A && B` / `A || B` chains as read-only when every segment is read-only, \
+and accepts output redirection to `/dev/null` or `/tmp/<simple-name>` — \
+so a legitimate pipe (e.g. `find . -type f | wc -l`) no longer forces a \
+confirmation. Constructs that still block classification: variable \
+expansion (`$VAR`), command substitution (`$(…)`, backticks), globs \
+(`*`, `?`, `[`), `;` sequences, `&` background, and redirections to any \
+other path. Avoid those unless they're truly needed.";
 
 pub struct SystemPromptBuilder {
     persona: &'static str,

@@ -79,10 +79,12 @@ impl PolicyEngine for DefaultPolicyEngine {
             RiskAction::Allow => PolicyAction::Allow,
             RiskAction::Confirm => PolicyAction::RequireConfirmation {
                 strong: false,
+                light: false,
                 phrase: None,
             },
             RiskAction::ConfirmStrong => PolicyAction::RequireConfirmation {
                 strong: true,
+                light: false,
                 phrase: Some(crate::phrase::generate_phrase(call)),
             },
             RiskAction::Deny => PolicyAction::Deny,
@@ -93,13 +95,16 @@ impl PolicyEngine for DefaultPolicyEngine {
             action = match action {
                 PolicyAction::Allow => PolicyAction::RequireConfirmation {
                     strong: true,
+                    light: false,
                     phrase: Some(crate::phrase::generate_phrase(call)),
                 },
                 PolicyAction::RequireConfirmation {
                     strong: false,
+                    light: _,
                     phrase: _,
                 } => PolicyAction::RequireConfirmation {
                     strong: true,
+                    light: false,
                     phrase: Some(crate::phrase::generate_phrase(call)),
                 },
                 other => other,
@@ -111,6 +116,7 @@ impl PolicyEngine for DefaultPolicyEngine {
             action,
             flags,
             reasons,
+            classification_reason: None,
         }
     }
 }
@@ -169,6 +175,7 @@ mod eng_tests {
             PolicyAction::RequireConfirmation {
                 strong: true,
                 phrase: Some(_),
+                ..
             } => {}
             other => panic!("expected strong confirm, got {:?}", other),
         }
@@ -191,6 +198,7 @@ mod eng_tests {
             PolicyAction::RequireConfirmation {
                 strong: true,
                 phrase: Some(p),
+                ..
             } => {
                 assert!(p.contains("rm"));
             }

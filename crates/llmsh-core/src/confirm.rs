@@ -20,10 +20,19 @@ impl ConfirmationGate for StdinConfirmationGate {
             match &step.decision.action {
                 PolicyAction::Allow => continue,
                 PolicyAction::Deny => return false,
-                PolicyAction::RequireConfirmation { strong, phrase } => {
+                PolicyAction::RequireConfirmation {
+                    strong,
+                    light,
+                    phrase,
+                } => {
+                    let reason_suffix = step
+                        .decision
+                        .classification_reason
+                        .map(|r| format!(" — {}", r.label()))
+                        .unwrap_or_default();
                     println!(
-                        "⚠ Confirm: {} (risk={:?})",
-                        step.call.tool_name, step.decision.effective_risk
+                        "⚠ Confirm: {} (risk={:?}{})",
+                        step.call.tool_name, step.decision.effective_risk, reason_suffix
                     );
                     for line in summarize_call(&step.call) {
                         println!("{}", line);
@@ -44,6 +53,21 @@ impl ConfirmationGate for StdinConfirmationGate {
                             return false;
                         }
                         if line.trim() != p {
+                            return false;
+                        }
+                    } else if *light {
+                        // Default-yes single-keystroke prompt: classifier
+                        // couldn't prove read-only, but the model declared
+                        // low risk. Confirmation is still required.
+                        print!("[Y/n] ");
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let mut line = String::new();
+                        if std::io::stdin().read_line(&mut line).is_err() {
+                            return false;
+                        }
+                        let s = line.trim().to_lowercase();
+                        if !(s.is_empty() || s == "y" || s == "yes" || s == "o" || s == "oui") {
                             return false;
                         }
                     } else {

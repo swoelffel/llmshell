@@ -2,8 +2,12 @@
 //! `Some(RiskLevel::ReadOnly)` only when the (program, args) pair is
 //! provably read-only. Anything ambiguous returns `None` so the caller
 //! falls back to the existing `RiskLevel::Unknown` → `Confirm` flow.
+//!
+//! The richer entry point [`classify_invocation`] returns a
+//! [`ClassificationReason`] when the verdict is not `ReadOnly`, so the
+//! confirmation gate can surface *why* a command was left unclassified.
 
-use crate::types::RiskLevel;
+use crate::types::{ClassificationReason, RiskLevel};
 
 const SHELLS: &[&str] = &[
     "bash", "sh", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "ash",
@@ -211,37 +215,57 @@ fn extract_shell_payload(program: &str, args: &[String]) -> Option<(String, Vec<
 }
 
 pub fn is_read_only_invocation(program: &str, args: &[String]) -> Option<RiskLevel> {
+    classify_invocation(program, args).ok()
+}
+
+/// Rich version of [`is_read_only_invocation`]. On success returns the
+/// concrete [`RiskLevel`]; on failure returns the [`ClassificationReason`]
+/// that surfaces in the confirmation prompt and audit log.
+pub fn classify_invocation(
+    program: &str,
+    args: &[String],
+) -> Result<RiskLevel, ClassificationReason> {
     if program.contains('/') {
-        return None;
+        return Err(ClassificationReason::AbsoluteOrRelativePath);
     }
 
     // Reject immediately if any argument contains a raw shell metacharacter.
-    // SHELLS are handled separately below via `extract_shell_payload`, which
-    // scans the `-c PAYLOAD` string for metachars itself. For non-shell
-    // programs the OS execvp path is safe IF arguments are clean; an arg like
-    // "inject|payload" would be benign to the OS but indicates an injection
-    // attempt or confused caller — either way it is not provably read-only.
+    // SHELLS are handled separately below via the shell-payload analyzers.
+    // For non-shell programs the OS execvp path is safe IF arguments are
+    // clean; an arg like "inject|payload" would be benign to the OS but
+    // indicates an injection attempt or confused caller.
     if !SHELLS.contains(&program)
         && args
             .iter()
             .any(|a| a.chars().any(|c| SHELL_METACHARS.contains(&c)))
     {
-        return None;
+        return Err(ClassificationReason::UnsafeArgument);
     }
 
     if SHELLS.contains(&program) {
-        let (inner_prog, inner_args) = extract_shell_payload(program, args)?;
-        if SHELLS.contains(&inner_prog.as_str()) || META_EXEC.contains(&inner_prog.as_str()) {
-            return None;
+        if args.len() < 2 || args[0] != "-c" {
+            return Err(ClassificationReason::NotShellDashCForm);
         }
-        return is_read_only_invocation(&inner_prog, &inner_args);
+        // Try the strict deshell first (cheap, covers payloads without
+        // metacharacters).
+        if let Some((inner_prog, inner_args)) = extract_shell_payload(program, args) {
+            if SHELLS.contains(&inner_prog.as_str()) {
+                return Err(ClassificationReason::NestedShellWrapping);
+            }
+            if META_EXEC.contains(&inner_prog.as_str()) {
+                return Err(ClassificationReason::ProgramNotAllowlisted);
+            }
+            return classify_invocation(&inner_prog, &inner_args);
+        }
+        // Fall back to the pipeline / safe-redirection analyzer (A + B).
+        return classify_shell_payload(&args[1]);
     }
     if META_EXEC.contains(&program) {
-        return None;
+        return Err(ClassificationReason::ProgramNotAllowlisted);
     }
 
     if ALWAYS_SAFE.contains(&program) {
-        return Some(RiskLevel::ReadOnly);
+        return Ok(RiskLevel::ReadOnly);
     }
 
     let safe = match program {
@@ -269,13 +293,158 @@ pub fn is_read_only_invocation(program: &str, args: &[String]) -> Option<RiskLev
         "firewall-cmd" => firewall_cmd_args_are_read_only(args),
         "mount" => mount_args_are_read_only(args),
         "dmesg" => dmesg_args_are_read_only(args),
-        _ => false,
+        _ => return Err(ClassificationReason::ProgramNotAllowlisted),
     };
     if safe {
-        Some(RiskLevel::ReadOnly)
+        Ok(RiskLevel::ReadOnly)
     } else {
-        None
+        Err(ClassificationReason::UnsafeArgument)
     }
+}
+
+/// Analyse a `bash -c "<payload>"` body that contains shell metacharacters
+/// the strict deshell rejected. Accepts pipelines (`|`), short-circuit
+/// chains (`&&`, `||`) and a small set of safe output redirections.
+///
+/// Rejects (returns `Err`):
+/// - command substitution (`$(…)`, backticks) and process substitution
+///   (`<(…)`, `>(…)`),
+/// - variable expansion (`$`),
+/// - `;` sequence and `&` background,
+/// - globs (`*`, `?`, `[`) at any position,
+/// - redirection targets other than `/dev/null` or `/tmp/<simple-name>`,
+/// - any pipeline segment whose program is not classified as read-only,
+/// - nested shells.
+fn classify_shell_payload(payload: &str) -> Result<RiskLevel, ClassificationReason> {
+    if payload.contains(';') {
+        return Err(ClassificationReason::SequenceOrBackground);
+    }
+    if payload.contains('\n') || payload.contains('`') {
+        return Err(ClassificationReason::CommandSubstitution);
+    }
+    if payload.contains("$(") || payload.contains("<(") || payload.contains(">(") {
+        return Err(ClassificationReason::CommandSubstitution);
+    }
+    if payload.contains('$') {
+        return Err(ClassificationReason::VariableExpansion);
+    }
+    if payload.contains('{')
+        || payload.contains('}')
+        || payload.contains('(')
+        || payload.contains(')')
+    {
+        // Subshell / brace group.
+        return Err(ClassificationReason::CommandSubstitution);
+    }
+
+    let tokens = shlex::split(payload).ok_or(ClassificationReason::UnparsableShellPayload)?;
+    if tokens.is_empty() {
+        return Err(ClassificationReason::UnparsableShellPayload);
+    }
+
+    let mut segments: Vec<Vec<String>> = vec![Vec::new()];
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i].clone();
+        match tok.as_str() {
+            "|" | "&&" | "||" => {
+                if segments.last().map(|s| s.is_empty()).unwrap_or(true) {
+                    return Err(ClassificationReason::UnparsableShellPayload);
+                }
+                segments.push(Vec::new());
+            }
+            "&" => return Err(ClassificationReason::SequenceOrBackground),
+            "|&" => return Err(ClassificationReason::SequenceOrBackground),
+            ">" | ">>" | "1>" | "2>" | "&>" | "1>>" | "2>>" | "&>>" => {
+                let target = tokens
+                    .get(i + 1)
+                    .ok_or(ClassificationReason::UnsafeRedirectionTarget)?;
+                if !is_safe_redirect_target(target) {
+                    return Err(ClassificationReason::UnsafeRedirectionTarget);
+                }
+                i += 1;
+            }
+            "<" => {
+                // Input redirection is fine for read-only — but we still
+                // need a following filename to skip.
+                tokens
+                    .get(i + 1)
+                    .ok_or(ClassificationReason::UnparsableShellPayload)?;
+                i += 1;
+            }
+            "2>&1" | "1>&2" | ">&2" | ">&1" => {
+                // FD duplications without a path target: harmless.
+            }
+            _ => {
+                if let Some(rest) = strip_redirect_prefix(&tok) {
+                    if !is_safe_redirect_target(rest) {
+                        return Err(ClassificationReason::UnsafeRedirectionTarget);
+                    }
+                } else if tok.contains('|') {
+                    // shlex doesn't split on `|` glued to a token (e.g.
+                    // `ls|wc`). Treat such tokens as unparseable rather
+                    // than accidentally classifying them.
+                    return Err(ClassificationReason::UnparsableShellPayload);
+                } else if tok.contains('*') || tok.contains('?') || tok.starts_with('[') {
+                    return Err(ClassificationReason::GlobNotResolved);
+                } else {
+                    segments
+                        .last_mut()
+                        .expect("segments is never empty")
+                        .push(tok);
+                }
+            }
+        }
+        i += 1;
+    }
+
+    for seg in &segments {
+        if seg.is_empty() {
+            return Err(ClassificationReason::UnparsableShellPayload);
+        }
+        let prog = seg[0].as_str();
+        if prog.contains('=') {
+            return Err(ClassificationReason::VariableExpansion);
+        }
+        if SHELLS.contains(&prog) {
+            return Err(ClassificationReason::NestedShellWrapping);
+        }
+        if META_EXEC.contains(&prog) {
+            return Err(ClassificationReason::ProgramNotAllowlisted);
+        }
+        let inner_args = seg[1..].to_vec();
+        match classify_invocation(prog, &inner_args) {
+            Ok(RiskLevel::ReadOnly) => {}
+            Ok(_) | Err(_) => return Err(ClassificationReason::UnsafePipelineSegment),
+        }
+    }
+    Ok(RiskLevel::ReadOnly)
+}
+
+fn strip_redirect_prefix(token: &str) -> Option<&str> {
+    for prefix in ["&>>", "&>", "2>>", "1>>", "2>", "1>", ">>", ">"] {
+        if let Some(rest) = token.strip_prefix(prefix) {
+            if rest.is_empty() {
+                return None;
+            }
+            return Some(rest);
+        }
+    }
+    None
+}
+
+fn is_safe_redirect_target(target: &str) -> bool {
+    if target == "/dev/null" {
+        return true;
+    }
+    if let Some(rest) = target.strip_prefix("/tmp/") {
+        return !rest.is_empty()
+            && !rest.contains("..")
+            && rest
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'));
+    }
+    false
 }
 
 pub fn parse_claimed_risk(s: &str) -> Option<RiskLevel> {
@@ -951,8 +1120,10 @@ mod tests {
     }
 
     #[test]
-    fn shells_are_blocked() {
-        // Shells without a safe `-c <payload>` form are still blocked.
+    fn shells_without_dash_c_form_are_blocked() {
+        // Shells without a `-c <payload>` form are still blocked, and any
+        // payload whose inner program isn't read-only stays blocked even
+        // when the pipeline parser engages.
         for prog in ["bash", "sh", "zsh", "fish", "dash"] {
             // Interactive / no args
             assert_eq!(
@@ -960,11 +1131,11 @@ mod tests {
                 None,
                 "{prog} with no args"
             );
-            // Unsafe payload (pipe metachar)
+            // Pipe with a mutating segment must stay refused.
             assert_eq!(
-                is_read_only_invocation(prog, &s(&["-c", "ls | grep foo"])),
+                is_read_only_invocation(prog, &s(&["-c", "ls | rm foo"])),
                 None,
-                "{prog} -c 'ls | grep foo'"
+                "{prog} -c 'ls | rm foo' must stay blocked"
             );
         }
     }
@@ -1108,23 +1279,103 @@ mod tests {
     }
 
     #[test]
-    fn deshell_refuses_metacharacters() {
+    fn deshell_refuses_unsafe_metacharacters() {
+        // These remain refused: variable expansion, globs, command
+        // substitution, sequence/background, brace/subshell groups.
         for payload in [
-            "ls | grep foo",
             "echo $HOME",
             "ls *.txt",
-            "cat /etc/hosts > /tmp/x",
             "ls; rm foo",
-            "ls && pwd",
             "ls\nrm",
             "echo `whoami`",
             "(ls)",
             "{ ls; }",
+            "ls & pwd",
+            "ls $(rm bad)",
         ] {
             assert_eq!(
                 is_read_only_invocation("bash", &s(&["-c", payload])),
                 None,
                 "payload should be refused: {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn pipeline_of_read_only_segments_is_classified() {
+        // A) pipes: every segment is read-only → whole pipeline is read-only.
+        for payload in [
+            "ls | wc -l",
+            "find . -maxdepth 1 -type f | wc -l",
+            "ls | sort | head",
+            "grep TODO src/main.rs | wc -l",
+            "ps aux | grep llmsh",
+            "cat file.txt | jq '.x'",
+        ] {
+            assert_eq!(
+                is_read_only_invocation("bash", &s(&["-c", payload])),
+                Some(RiskLevel::ReadOnly),
+                "expected read-only pipeline: {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_circuit_chain_of_read_only_segments_is_classified() {
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls && pwd"])),
+            Some(RiskLevel::ReadOnly)
+        );
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls || true"])),
+            Some(RiskLevel::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn pipeline_with_mutating_segment_rejected() {
+        // && to a mutating tool — must NOT be classified read-only.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls && rm foo"])),
+            None
+        );
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "find . | xargs rm"])),
+            None
+        );
+    }
+
+    #[test]
+    fn safe_redirection_to_dev_null_or_tmp_is_classified() {
+        // B) outputs to /dev/null and /tmp/<simple-name> are safe.
+        for payload in [
+            "ls > /dev/null",
+            "ls >/dev/null",
+            "grep TODO src/main.rs 2>/dev/null",
+            "ls > /tmp/out.txt",
+            "ls >> /tmp/log",
+            "find . | wc -l > /dev/null",
+        ] {
+            assert_eq!(
+                is_read_only_invocation("bash", &s(&["-c", payload])),
+                Some(RiskLevel::ReadOnly),
+                "expected safe redirection accepted: {payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsafe_redirection_target_rejected() {
+        for payload in [
+            "ls > /etc/passwd",
+            "cat /etc/hosts > /tmp/../etc/x",
+            "ls > ~/.ssh/known_hosts",
+            "ls > /home/u/file",
+        ] {
+            assert_eq!(
+                is_read_only_invocation("bash", &s(&["-c", payload])),
+                None,
+                "payload must be refused: {payload}"
             );
         }
     }

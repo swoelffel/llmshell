@@ -2,6 +2,41 @@
 
 All notable changes to LLMShell are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches v1.0.
 
+## [Unreleased]
+
+### Policy — pipeline-aware classifier
+
+- `bash -c "A | B"`, `A && B`, `A || B` are now classified `ReadOnly`
+  when every segment is independently read-only — the original user
+  complaint `find . -maxdepth 1 -type f | wc -l` no longer triggers a
+  confirmation prompt.
+- Safe output redirections accepted: `>/dev/null`, `2>/dev/null`,
+  `2>&1`, and `>/tmp/<simple-name>`. Any other target keeps the call at
+  `Unknown` (confirm).
+- Unsafe constructs still block classification: variable expansion
+  (`$VAR`), command substitution (`$(…)`, backticks), globs, `;`
+  sequence, `&` background, redirections to other paths.
+
+### UX — explainable Unknown + light confirmation
+
+- New `ClassificationReason` is propagated from the deterministic
+  classifier into `PolicyDecision.classification_reason`. The
+  confirmation prompt now reads `risk=Unknown — segment de pipeline
+  non read-only` instead of an opaque `Unknown`.
+- `PolicyAction::RequireConfirmation` gains `light: bool`. When the
+  classifier returns `Unknown` but the model declared
+  `claimed_risk = read_only|low`, the prompt is downgraded to a
+  default-yes `[Y/n]` single-keystroke confirmation. The model never
+  gains authority over execution — a confirm is still required, only
+  the prompt is lighter.
+
+### Persona — agent prompt updated
+
+- System prompt now tells the model that simple pipelines and safe
+  redirections in `bash -c "…"` are recognised by the classifier, so
+  it can keep using legitimate shell forms without forcing the user
+  through a confirmation.
+
 ## [0.2.14] — 2026-05-11
 
 ### Security — audit chain

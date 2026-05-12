@@ -124,9 +124,13 @@ For `*` / `?` patterns, call the `glob` tool FIRST to expand the pattern,\n\
 then pass the resulting paths to `program` directly.\n\
 \n\
 Why it matters: the policy classifier inspects `program` + `args` to grant\n\
-read-only commands `Allow` (no prompt). Wrapping in bash blinds the\n\
-classifier — every command then requires user confirmation, which is\n\
-friction the user dislikes.\n\
+read-only commands `Allow` (no prompt). For `bash -c \"…\"`, the classifier\n\
+now also parses simple pipelines (`A | B`), short-circuit chains\n\
+(`A && B`, `A || B`) and safe redirections (`>/dev/null`, `>/tmp/<name>`,\n\
+`2>/dev/null`) — those stay `Allow` when every segment is read-only.\n\
+What still forces confirmation: variable expansion ($VAR), command\n\
+substitution ($(…), backticks), globs (*, ?, [), ; sequences, & background,\n\
+and redirections to any other path. Avoid those unless truly needed.\n\
 \n\
 claimed_risk — your honest estimate (the policy may override):\n\
   • read_only   — no filesystem/network/state mutation (ls, grep, cat…)\n\

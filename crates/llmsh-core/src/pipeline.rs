@@ -2,7 +2,7 @@ use crate::plan::{CheckedPlan, CheckedStep, ModelPlan};
 use llmsh_llm::types::ToolCall;
 use llmsh_policy::context::PolicyContext;
 use llmsh_policy::engine::PolicyEngine;
-use llmsh_policy::types::{PolicyAction, PolicyDecision, RiskLevel};
+use llmsh_policy::types::{ClassificationReason, PolicyAction, PolicyDecision, RiskLevel};
 use llmsh_tools::enrich::{enrich, EnrichmentInput};
 use llmsh_tools::registry::ToolRegistry;
 use std::path::PathBuf;
@@ -54,6 +54,7 @@ impl Pipeline {
                         action: PolicyAction::Deny,
                         flags: vec![],
                         reasons: vec![format!("tool not in registry: {}", name)],
+                        classification_reason: None,
                     },
                 },
                 Err(PipelineError::Schema(msg)) => {
@@ -72,6 +73,7 @@ impl Pipeline {
                             action: PolicyAction::Deny,
                             flags: vec![],
                             reasons: vec![msg],
+                            classification_reason: None,
                         },
                     }
                 }
@@ -107,17 +109,27 @@ impl Pipeline {
                 sensitive_patterns: sensitive,
             },
         );
-        if self.auto_classify_run_process && enriched.tool_name == "run_process" {
-            if let Some(downgraded) = classify_run_process_args(&enriched.args) {
-                enriched.declared_risk = downgraded;
-                if !enriched
-                    .flags
-                    .contains(&llmsh_policy::types::PolicyFlag::KnownReadOnlyCommand)
-                {
-                    enriched
-                        .flags
-                        .push(llmsh_policy::types::PolicyFlag::KnownReadOnlyCommand);
+        let mut classification_reason: Option<ClassificationReason> = None;
+        if enriched.tool_name == "run_process" {
+            if self.auto_classify_run_process {
+                match classify_run_process_args(&enriched.args) {
+                    Ok(downgraded) => {
+                        enriched.declared_risk = downgraded;
+                        if !enriched
+                            .flags
+                            .contains(&llmsh_policy::types::PolicyFlag::KnownReadOnlyCommand)
+                        {
+                            enriched
+                                .flags
+                                .push(llmsh_policy::types::PolicyFlag::KnownReadOnlyCommand);
+                        }
+                    }
+                    Err(reason) => {
+                        classification_reason = Some(reason);
+                    }
                 }
+            } else {
+                classification_reason = Some(ClassificationReason::UnclassifiedDefault);
             }
         }
         // Privilege-escalation flag: post-deshell so `bash -c "sudo …"` is caught.
@@ -151,7 +163,27 @@ impl Pipeline {
                 }
             }
         }
-        let decision = self.policy.evaluate(&enriched, ctx);
+        let mut decision = self.policy.evaluate(&enriched, ctx);
+        decision.classification_reason = classification_reason;
+        // D: when the deterministic classifier left the call as `Unknown`
+        // but the model declared a low-severity `claimed_risk`, downgrade
+        // the confirmation prompt to a single-keystroke default-yes form.
+        // The model never gains authority over execution: a confirm is
+        // still required, only the prompt is lighter.
+        if matches!(decision.effective_risk, RiskLevel::Unknown)
+            && enriched
+                .flags
+                .contains(&llmsh_policy::types::PolicyFlag::ModelDisagreesOnRisk)
+        {
+            if let PolicyAction::RequireConfirmation {
+                strong: false,
+                light,
+                ..
+            } = &mut decision.action
+            {
+                *light = true;
+            }
+        }
         Ok(CheckedStep {
             call: enriched,
             decision,
@@ -203,8 +235,11 @@ fn detects_privilege_escalation(args: &serde_json::Value) -> bool {
     )
 }
 
-fn classify_run_process_args(args: &serde_json::Value) -> Option<RiskLevel> {
-    let program = args.get("program").and_then(|v| v.as_str())?;
+fn classify_run_process_args(args: &serde_json::Value) -> Result<RiskLevel, ClassificationReason> {
+    let program = args
+        .get("program")
+        .and_then(|v| v.as_str())
+        .ok_or(ClassificationReason::UnclassifiedDefault)?;
     let arg_list: Vec<String> = args
         .get("args")
         .and_then(|v| v.as_array())
@@ -214,7 +249,7 @@ fn classify_run_process_args(args: &serde_json::Value) -> Option<RiskLevel> {
                 .collect()
         })
         .unwrap_or_default();
-    llmsh_policy::safe_commands::is_read_only_invocation(program, &arg_list)
+    llmsh_policy::safe_commands::classify_invocation(program, &arg_list)
 }
 
 fn validate_schema(schema: &serde_json::Value, args: &serde_json::Value) -> Result<(), String> {
@@ -395,6 +430,78 @@ mod classifier_tests {
             .call
             .flags
             .contains(&PolicyFlag::UsesPrivilegeEscalation));
+    }
+
+    #[test]
+    fn bash_pipe_of_read_only_segments_is_allowed() {
+        // The original user complaint: `bash -c "find . | wc -l"` was
+        // forced to Confirm because the classifier rejected pipes. With
+        // the new pipeline parser it must be downgraded to ReadOnly →
+        // PolicyAction::Allow with no prompt.
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"bash",
+                "args":["-c","find . -maxdepth 1 -type f | wc -l"],
+                "intent":"count files","claimed_risk":"read_only"
+            })),
+            &ctx(),
+            &[],
+        );
+        let step = &out.plan.steps[0];
+        assert_eq!(step.call.declared_risk, RiskLevel::ReadOnly);
+        assert!(step.call.flags.contains(&PolicyFlag::KnownReadOnlyCommand));
+        assert!(matches!(step.decision.action, PolicyAction::Allow));
+        assert!(step.decision.classification_reason.is_none());
+    }
+
+    #[test]
+    fn bash_pipe_with_destructive_segment_stays_unknown_with_reason() {
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"bash","args":["-c","find . | xargs rm"],
+                "intent":"cleanup","claimed_risk":"destructive"
+            })),
+            &ctx(),
+            &[],
+        );
+        let step = &out.plan.steps[0];
+        // declared_risk was upgraded by claimed_risk=destructive.
+        assert_eq!(step.call.declared_risk, RiskLevel::Destructive);
+        assert!(matches!(
+            step.decision.classification_reason,
+            Some(ClassificationReason::UnsafePipelineSegment)
+                | Some(ClassificationReason::ProgramNotAllowlisted)
+        ));
+    }
+
+    #[test]
+    fn unknown_with_claimed_read_only_becomes_light_confirm() {
+        // The classifier can't prove read-only (`awk` is intentionally
+        // out of allowlist), the LLM claimed read_only — engine should
+        // ask but with a default-yes single-keystroke prompt.
+        let p = make_pipeline(true);
+        let out = p.check(
+            model_plan(serde_json::json!({
+                "program":"awk","args":["{print $1}","data.txt"],
+                "intent":"extract column","claimed_risk":"read_only"
+            })),
+            &ctx(),
+            &[],
+        );
+        let step = &out.plan.steps[0];
+        assert_eq!(step.call.declared_risk, RiskLevel::Unknown);
+        assert!(step.call.flags.contains(&PolicyFlag::ModelDisagreesOnRisk));
+        match step.decision.action {
+            PolicyAction::RequireConfirmation {
+                strong: false,
+                light: true,
+                ..
+            } => {}
+            ref other => panic!("expected light confirm, got {:?}", other),
+        }
+        assert!(step.decision.classification_reason.is_some());
     }
 
     #[test]
