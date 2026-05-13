@@ -56,11 +56,23 @@ open cov/html/index.html                              # macOS
 
 La CI ([.github/workflows/coverage.yml](.github/workflows/coverage.yml)) applique un plancher de 87 % sur `llmsh-policy`, `llmsh-audit` et `llmsh-redact`. Couverture globale visible dans l'artifact `coverage-summary` de chaque PR.
 
+## Local install / upgrade — mandatory runbook
+
+Whenever the user asks to "install", "deploy locally", "update my llmsh", "tester ma version", or any equivalent, **follow [docs/runbooks/local-install.md](docs/runbooks/local-install.md) end-to-end**. Do not improvise: a bare `cp target/release/llmsh ~/.cargo/bin/llmsh` is known to break on macOS Sequoia (provenance xattr → `zsh: killed`) and updating the binary without syncing `config.toml` leaves new providers/models invisible in the REPL.
+
+The non-negotiable steps:
+
+1. Install via `cargo install --path crates/llmsh-cli --force` (preferred). If the harness blocks it, the manual fallback is **always the triplet** `cp` + `xattr -c <dest>` + `codesign --force --sign - <dest>` — never just `cp`.
+2. If the release added a provider, a policy key, or any new top-level config section: **append** the missing block(s) to the existing user `config.toml` (path is OS-dependent — see the runbook). Never overwrite the file; preserve user overrides.
+3. Run the verification gate from the runbook: `which llmsh`, `llmsh --version` matches `Cargo.toml`, `/provider` / `/model list` exposes the new entries, one smoke turn writes an audit event.
+
+If any step fails, do **not** declare the deploy complete — re-run the relevant section.
+
 ## Run
 
 ```bash
-export OPENAI_API_KEY=sk-...
-./target/release/llmsh                # or: cargo run -p llmsh-cli
+export OPENAI_API_KEY=sk-...        # or ANTHROPIC_API_KEY for Claude
+./target/release/llmsh              # or: cargo run -p llmsh-cli
 ```
 
 Useful env vars: `LLMSH_DEBUG=1` (tracing to stderr), `LLMSH_VERBOSE=1|2` (per-turn stats; CLI `-v` / `-vv` are equivalents), `LLMSH_NO_AUDIT=1` (disable audit — tests rely on this off), `LLMSH_NO_AUTOINIT=1` (skip the bootstrap `/init`), `LLMSH_CONFIG`, `LLMSH_MODEL`, `LLMSH_MEMORY_DB`. CLI flags: `-v` / `-vv`, `--config <path>`. First launch writes a default user config — path is OS-dependent via the `directories` crate: `~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS, `%APPDATA%\llmsh\config.toml` on Windows (see [docs/configuration.md](docs/configuration.md)). A `.llmsh.toml` in the cwd merges on top. Audit log: `~/.llmsh/sessions/` (override via `audit.directory`).
