@@ -15,9 +15,11 @@ LLMShell (`llmsh`) lets you describe terminal tasks in natural language. The age
 
 ```bash
 cargo install --git https://github.com/swoelffel/llmshell --locked
-export OPENAI_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...          # or ANTHROPIC_API_KEY=sk-ant-... for Claude
 llmsh
 ```
+
+Three providers are supported out of the box: OpenAI-compatible APIs, Anthropic (Claude Haiku / Sonnet / Opus), and Ollama for local models. Switch at runtime with `/provider set anthropic` or `/model use claude-sonnet-4-6`.
 
 On first launch, `llmsh` writes a default user config (`~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS, `%APPDATA%\llmsh\config.toml` on Windows). A project-level `.llmsh.toml` in the current directory merges on top. See [docs/configuration.md](docs/configuration.md).
 
@@ -111,15 +113,17 @@ cargo build --release
 
 Pre-built Linux/macOS binaries, an `install.sh` script and a Homebrew tap are tracked on the [roadmap](ROADMAP.md) for v0.3.
 
-### Reinstalling after a rebuild (macOS gotcha)
+### Reinstalling after a rebuild
 
-When upgrading an existing install, prefer `cargo install --git … --force` or `cargo install --path crates/llmsh-cli --force` rather than `cp target/release/llmsh ~/.cargo/bin/llmsh`. On macOS Sequoia, overwriting the binary in place can keep a cached TCC / launch-services verdict bound to the previous inode — the new binary then dies silently with `zsh: killed llmsh`. If you hit it, the unstick is one line:
+`cargo install --path crates/llmsh-cli --force` is the supported flow. If you must copy the binary manually (e.g. sandboxed environment), follow the triplet — a bare `cp` over an existing binary on macOS Sequoia hits the provenance xattr and dies with `zsh: killed`:
 
 ```bash
-rm ~/.cargo/bin/llmsh && cp target/release/llmsh ~/.cargo/bin/llmsh
+cp target/release/llmsh ~/.cargo/bin/llmsh
+xattr -c ~/.cargo/bin/llmsh
+codesign --force --sign - ~/.cargo/bin/llmsh
 ```
 
-The freshly-created inode resets the cached verdict.
+Full procedure (including post-install config sync and the verification gate): [docs/runbooks/local-install.md](docs/runbooks/local-install.md).
 
 ## Configuration
 
@@ -135,7 +139,8 @@ A project-level `.llmsh.toml` merges on top of the user config.
 
 Useful environment variables:
 
-- `OPENAI_API_KEY` — required.
+- `OPENAI_API_KEY` — required for the OpenAI provider.
+- `ANTHROPIC_API_KEY` — required for the Anthropic provider (Claude).
 - `LLMSH_MODEL` — override default model for a session.
 - `LLMSH_CONFIG` — alternative config path.
 - `LLMSH_DEBUG=1` — tracing on stderr.
