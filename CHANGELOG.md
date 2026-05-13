@@ -2,6 +2,25 @@
 
 All notable changes to LLMShell are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches v1.0.
 
+## [0.3.1] — 2026-05-13
+
+### Policy — quoting-aware shell lexer
+
+- New internal `shell_lex` module replaces `shlex::split` inside
+  `classify_shell_payload`. Tokens now carry their `Quoting` context
+  (`Bare`, `Single`, `Double`, `Mixed`), so operators and literals are
+  separated structurally instead of being inferred after the fact.
+- The defensive `tok.contains('|')` guard is removed. Regex alternation
+  inside quoted arguments — e.g. `df -h | grep -E '^/dev|^Filesystem'`
+  or `sysctl -a | grep -E 'kern.maxfiles|kern.maxfilesperproc'` — is now
+  classified `ReadOnly` instead of `Unknown`, dropping spurious confirm
+  prompts on a common diagnostic pattern.
+- Fail-closed posture preserved: the upstream metacharacter pre-filter
+  (`$`, backtick, `\n`, `(`, `{`, `<(`, `>(`, `$(`) is unchanged, and
+  every lexer error (`UnterminatedQuote`, `DanglingEscape`,
+  `UnsupportedConstruct` for heredocs) maps back to
+  `ClassificationReason::UnparsableShellPayload` → `Unknown` → confirm.
+
 ## [0.3.0] — 2026-05-13
 
 ### Added
