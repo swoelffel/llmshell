@@ -7,5 +7,6 @@ pub mod paths;
 pub mod phrase;
 pub mod safe_commands;
 pub mod sensitive;
+pub(crate) mod shell_lex;
 pub use context::*;
 pub use engine::*;
