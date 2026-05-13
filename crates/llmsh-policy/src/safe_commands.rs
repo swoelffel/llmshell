@@ -225,6 +225,19 @@ pub fn classify_invocation(
     program: &str,
     args: &[String],
 ) -> Result<RiskLevel, ClassificationReason> {
+    classify_invocation_inner(program, args, false)
+}
+
+/// Internal entry point. When `args_prevalidated` is true, the caller
+/// guarantees that any shell metacharacters present in `args` are literal
+/// (they came out of the quoting-aware lexer) and the up-front
+/// SHELL_METACHARS guard is skipped. Used by `classify_shell_payload` to
+/// recurse into pipeline segments.
+fn classify_invocation_inner(
+    program: &str,
+    args: &[String],
+    args_prevalidated: bool,
+) -> Result<RiskLevel, ClassificationReason> {
     if program.contains('/') {
         return Err(ClassificationReason::AbsoluteOrRelativePath);
     }
@@ -234,7 +247,8 @@ pub fn classify_invocation(
     // For non-shell programs the OS execvp path is safe IF arguments are
     // clean; an arg like "inject|payload" would be benign to the OS but
     // indicates an injection attempt or confused caller.
-    if !SHELLS.contains(&program)
+    if !args_prevalidated
+        && !SHELLS.contains(&program)
         && args
             .iter()
             .any(|a| a.chars().any(|c| SHELL_METACHARS.contains(&c)))
@@ -337,61 +351,69 @@ fn classify_shell_payload(payload: &str) -> Result<RiskLevel, ClassificationReas
         return Err(ClassificationReason::CommandSubstitution);
     }
 
-    let tokens = shlex::split(payload).ok_or(ClassificationReason::UnparsableShellPayload)?;
-    if tokens.is_empty() {
+    let lexemes = crate::shell_lex::lex(payload).map_err(|e| match e {
+        crate::shell_lex::LexError::UnterminatedQuote
+        | crate::shell_lex::LexError::DanglingEscape
+        | crate::shell_lex::LexError::UnsupportedConstruct => {
+            ClassificationReason::UnparsableShellPayload
+        }
+    })?;
+    if lexemes.is_empty() {
         return Err(ClassificationReason::UnparsableShellPayload);
     }
 
     let mut segments: Vec<Vec<String>> = vec![Vec::new()];
     let mut i = 0;
-    while i < tokens.len() {
-        let tok = tokens[i].clone();
-        match tok.as_str() {
-            "|" | "&&" | "||" => {
-                if segments.last().map(|s| s.is_empty()).unwrap_or(true) {
-                    return Err(ClassificationReason::UnparsableShellPayload);
+    while i < lexemes.len() {
+        match &lexemes[i] {
+            crate::shell_lex::Lexeme::Op(op) => {
+                use crate::shell_lex::Operator::*;
+                match op {
+                    Pipe | AndIf | OrIf => {
+                        if segments.last().map(|s| s.is_empty()).unwrap_or(true) {
+                            return Err(ClassificationReason::UnparsableShellPayload);
+                        }
+                        segments.push(Vec::new());
+                    }
+                    Background | Semicolon => {
+                        return Err(ClassificationReason::SequenceOrBackground);
+                    }
+                    RedirOut | RedirAppend | RedirOutN(_) | RedirAppendN(_) | RedirAll
+                    | RedirAllAppend => {
+                        let target = match lexemes.get(i + 1) {
+                            Some(crate::shell_lex::Lexeme::Word(t)) => &t.value,
+                            _ => return Err(ClassificationReason::UnsafeRedirectionTarget),
+                        };
+                        if !is_safe_redirect_target(target) {
+                            return Err(ClassificationReason::UnsafeRedirectionTarget);
+                        }
+                        i += 1;
+                    }
+                    RedirIn => match lexemes.get(i + 1) {
+                        Some(crate::shell_lex::Lexeme::Word(_)) => {
+                            i += 1;
+                        }
+                        _ => return Err(ClassificationReason::UnparsableShellPayload),
+                    },
+                    FdDup(_) => { /* harmless FD duplication */ }
                 }
-                segments.push(Vec::new());
             }
-            "&" => return Err(ClassificationReason::SequenceOrBackground),
-            "|&" => return Err(ClassificationReason::SequenceOrBackground),
-            ">" | ">>" | "1>" | "2>" | "&>" | "1>>" | "2>>" | "&>>" => {
-                let target = tokens
-                    .get(i + 1)
-                    .ok_or(ClassificationReason::UnsafeRedirectionTarget)?;
-                if !is_safe_redirect_target(target) {
-                    return Err(ClassificationReason::UnsafeRedirectionTarget);
-                }
-                i += 1;
-            }
-            "<" => {
-                // Input redirection is fine for read-only — but we still
-                // need a following filename to skip.
-                tokens
-                    .get(i + 1)
-                    .ok_or(ClassificationReason::UnparsableShellPayload)?;
-                i += 1;
-            }
-            "2>&1" | "1>&2" | ">&2" | ">&1" => {
-                // FD duplications without a path target: harmless.
-            }
-            _ => {
-                if let Some(rest) = strip_redirect_prefix(&tok) {
+            crate::shell_lex::Lexeme::Word(tok) => {
+                // Le `|` à l'intérieur d'un token quoté est désormais préservé
+                // par le lexer comme caractère littéral — plus de garde-fou
+                // `tok.contains('|')` ici.
+                let value = &tok.value;
+                if let Some(rest) = strip_redirect_prefix(value) {
                     if !is_safe_redirect_target(rest) {
                         return Err(ClassificationReason::UnsafeRedirectionTarget);
                     }
-                } else if tok.contains('|') {
-                    // shlex doesn't split on `|` glued to a token (e.g.
-                    // `ls|wc`). Treat such tokens as unparseable rather
-                    // than accidentally classifying them.
-                    return Err(ClassificationReason::UnparsableShellPayload);
-                } else if tok.contains('*') || tok.contains('?') || tok.starts_with('[') {
+                } else if value.contains('*') || value.contains('?') || value.starts_with('[') {
                     return Err(ClassificationReason::GlobNotResolved);
                 } else {
                     segments
                         .last_mut()
                         .expect("segments is never empty")
-                        .push(tok);
+                        .push(value.clone());
                 }
             }
         }
@@ -413,7 +435,10 @@ fn classify_shell_payload(payload: &str) -> Result<RiskLevel, ClassificationReas
             return Err(ClassificationReason::ProgramNotAllowlisted);
         }
         let inner_args = seg[1..].to_vec();
-        match classify_invocation(prog, &inner_args) {
+        // Args came out of the quoting-aware lexer: any `|`/`&`/etc inside
+        // them is a literal character (quoted or backslash-escaped), not a
+        // shell operator. Skip the up-front SHELL_METACHARS guard.
+        match classify_invocation_inner(prog, &inner_args, true) {
             Ok(RiskLevel::ReadOnly) => {}
             Ok(_) | Err(_) => return Err(ClassificationReason::UnsafePipelineSegment),
         }
@@ -826,7 +851,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "documente le bug du garde-fou tok.contains('|') — débloqué par Phase 1+3"]
     fn regression_pipe_alternation_in_grep_df() {
         // Real-world bash -c payload that classifies as Unknown instead of ReadOnly:
         // shlex strips the quotes around the regex, leaving tok.contains('|') unable
@@ -840,7 +864,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "documente le bug du garde-fou tok.contains('|') — débloqué par Phase 1+3"]
     fn regression_pipe_alternation_in_grep_sysctl() {
         // Real-world bash -c payload that classifies as Unknown instead of ReadOnly:
         // shlex strips the quotes around the regex, leaving tok.contains('|') unable
@@ -850,6 +873,56 @@ mod tests {
             is_read_only_invocation("bash", &s(&["-c", payload])),
             Some(RiskLevel::ReadOnly),
             "sysctl -a piped to grep with regex alternation should be ReadOnly"
+        );
+    }
+
+    #[test]
+    fn phase3_glued_unquoted_pipe_is_read_only() {
+        // `ls|wc -l` — pipe glued without spaces, both sides bare. The new
+        // lexer splits the operator structurally; classification stays ReadOnly.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "ls|wc -l"])),
+            Some(RiskLevel::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn phase3_quoted_pipe_preserved_as_literal() {
+        // `echo 'a|b'` — pipe inside single quotes is literal; echo is in
+        // ALWAYS_SAFE so the single segment classifies ReadOnly.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "echo 'a|b'"])),
+            Some(RiskLevel::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn phase3_unterminated_quote_is_unparsable() {
+        // `echo 'abc` — single quote never closed; lexer returns
+        // UnterminatedQuote -> UnparsableShellPayload -> None.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "echo 'abc"])),
+            None
+        );
+    }
+
+    #[test]
+    fn phase3_heredoc_rejected() {
+        // `cat <<EOF` — heredoc construct rejected as Unsupported by the
+        // lexer, mapped to UnparsableShellPayload -> None.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", "cat <<EOF"])),
+            None
+        );
+    }
+
+    #[test]
+    fn phase3_backslash_escape_pipe_is_literal() {
+        // `echo a\|b` — the bare backslash escapes `|` so it's a literal
+        // character inside one bare word; classification stays ReadOnly.
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", r"echo a\|b"])),
+            Some(RiskLevel::ReadOnly)
         );
     }
 

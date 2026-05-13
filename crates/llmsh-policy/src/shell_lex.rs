@@ -1,4 +1,3 @@
-#![allow(dead_code)] // wired into classify_shell_payload in Phase 3
 //! Quoting-aware shell lexer.
 //!
 //! Produces [`Lexeme`]s (words with [`Quoting`] metadata + operator variants)
