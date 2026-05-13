@@ -826,6 +826,34 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "documente le bug du garde-fou tok.contains('|') — débloqué par Phase 1+3"]
+    fn regression_pipe_alternation_in_grep_df() {
+        // Real-world bash -c payload that classifies as Unknown instead of ReadOnly:
+        // shlex strips the quotes around the regex, leaving tok.contains('|') unable
+        // to distinguish operator from quoted regex alternation.
+        let payload = "df -h | grep -E '^/dev|^Filesystem'";
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", payload])),
+            Some(RiskLevel::ReadOnly),
+            "df -h piped to grep with regex alternation should be ReadOnly"
+        );
+    }
+
+    #[test]
+    #[ignore = "documente le bug du garde-fou tok.contains('|') — débloqué par Phase 1+3"]
+    fn regression_pipe_alternation_in_grep_sysctl() {
+        // Real-world bash -c payload that classifies as Unknown instead of ReadOnly:
+        // shlex strips the quotes around the regex, leaving tok.contains('|') unable
+        // to distinguish operator from quoted regex alternation.
+        let payload = "sysctl -a | grep -E 'kern.maxfiles|kern.maxfilesperproc|vm.swapusage'";
+        assert_eq!(
+            is_read_only_invocation("bash", &s(&["-c", payload])),
+            Some(RiskLevel::ReadOnly),
+            "sysctl -a piped to grep with regex alternation should be ReadOnly"
+        );
+    }
+
+    #[test]
     fn linux_hardware_inspection_is_read_only() {
         for prog in [
             "lscpu",
