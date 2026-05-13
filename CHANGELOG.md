@@ -2,6 +2,28 @@
 
 All notable changes to LLMShell are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches v1.0.
 
+## [0.3.0] — 2026-05-13
+
+### Added
+
+- **Anthropic provider** (`llmsh-llm-anthropic`) — native Claude Messages API
+  implementation supporting Haiku (default), Sonnet, and Opus 4.x models.
+  - Configured via `[providers.anthropic]` + `ANTHROPIC_API_KEY`.
+  - Switch at runtime with `/provider set anthropic`; the provider's first
+    model in `models[...]` (Haiku) is selected automatically.
+  - JSON-object response_format is emulated server-side via the
+    assistant-prefill `{` technique (cookbook) so the compactor keeps working
+    transparently across providers.
+  - HTTP error bodies are redacted via `llmsh-redact` (no `sk-ant-…` leaks).
+- Pricing + context-window entries for `claude-haiku-4-5`,
+  `claude-sonnet-4-6`, `claude-opus-4-7`.
+
+### Not included (parked for a dedicated minor)
+
+- Anthropic streaming (SSE) and explicit `cache_control: ephemeral` prompt
+  caching — the system prompt is already ordered stable→dynamic, so the
+  switch will be plumbing only.
+
 ## [0.2.15] — 2026-05-12
 
 ### Policy — pipeline-aware classifier

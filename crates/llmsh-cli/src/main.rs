@@ -19,6 +19,9 @@ use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
 use llmsh_core::repl::{Repl, ReplState};
 use llmsh_llm::provider::LlmProvider;
+use llmsh_llm_anthropic::provider::{
+    AnthropicConfig, AnthropicProvider, DEFAULT_MAX_TOKENS as ANTHROPIC_DEFAULT_MAX_TOKENS,
+};
 use llmsh_llm_ollama::provider::{OllamaConfig, OllamaProvider};
 use llmsh_llm_openai::provider::{OpenAIConfig, OpenAIProvider};
 use llmsh_policy::context::PolicyContext;
@@ -106,9 +109,11 @@ async fn main() -> anyhow::Result<()> {
         println!("No llmsh config found.");
         println!("Created {}.", cfg_path.display());
         println!();
-        println!("Set OPENAI_API_KEY to use the default OpenAI-compatible provider:");
+        println!("Set OPENAI_API_KEY to use the default OpenAI-compatible provider,");
+        println!("or ANTHROPIC_API_KEY for the Anthropic provider (Claude Haiku/Sonnet/Opus):");
         println!();
         println!("  export OPENAI_API_KEY=...");
+        println!("  export ANTHROPIC_API_KEY=...");
         println!();
         println!("Then run: llmsh");
         return Ok(());
@@ -387,6 +392,22 @@ fn build_inner_provider(
             })?;
             Ok(Arc::new(p))
         }
+        "anthropic" => {
+            let env_var = pcfg
+                .api_key_env
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("anthropic provider requires api_key_env"))?;
+            let api_key = std::env::var(env_var)
+                .map_err(|_| anyhow::anyhow!("env var {} not set", env_var))?;
+            let p = AnthropicProvider::new(AnthropicConfig {
+                base_url: pcfg.base_url.clone(),
+                api_key,
+                model: model.into(),
+                timeout_ms: 60_000,
+                max_tokens: ANTHROPIC_DEFAULT_MAX_TOKENS,
+            })?;
+            Ok(Arc::new(p))
+        }
         "ollama" => {
             // Ollama default config does not require auth (local server). If
             // the user did set api_key_env we ignore it for now.
@@ -397,7 +418,10 @@ fn build_inner_provider(
             })?;
             Ok(Arc::new(p))
         }
-        other => anyhow::bail!("unknown provider \"{}\"; supported: openai, ollama", other),
+        other => anyhow::bail!(
+            "unknown provider \"{}\"; supported: openai, anthropic, ollama",
+            other
+        ),
     }
 }
 

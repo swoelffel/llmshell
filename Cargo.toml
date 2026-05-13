@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/llmsh-llm",
     "crates/llmsh-llm-openai",
+    "crates/llmsh-llm-anthropic",
     "crates/llmsh-llm-ollama",
     "crates/llmsh-policy",
     "crates/llmsh-redact",
@@ -17,7 +18,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.2.15"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.78"
 license = "MIT"

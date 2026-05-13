@@ -18,6 +18,8 @@ pub fn context_window_for(model: &str) -> u32 {
         16_385
     } else if m.starts_with("chatgpt-") {
         128_000
+    } else if m.starts_with("claude-") {
+        200_000
     } else {
         8_192
     }
@@ -38,6 +40,14 @@ mod tests {
         assert_eq!(context_window_for("gpt-5.4-mini"), 400_000);
         assert_eq!(context_window_for("o3-mini"), 200_000);
         assert_eq!(context_window_for("gpt-3.5-turbo"), 16_385);
+    }
+
+    #[test]
+    fn claude_family_mapped() {
+        assert_eq!(context_window_for("claude-haiku-4-5"), 200_000);
+        assert_eq!(context_window_for("claude-sonnet-4-6"), 200_000);
+        assert_eq!(context_window_for("claude-opus-4-7"), 200_000);
+        assert_eq!(context_window_for("anthropic:claude-haiku-4-5"), 200_000);
     }
 
     #[test]

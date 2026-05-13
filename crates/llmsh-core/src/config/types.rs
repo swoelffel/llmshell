@@ -238,6 +238,19 @@ impl Config {
             },
         );
         providers.insert(
+            "anthropic".into(),
+            ProviderConfig {
+                api_key_env: Some("ANTHROPIC_API_KEY".into()),
+                base_url: "https://api.anthropic.com".into(),
+                tool_calling: "native".into(),
+                models: vec![
+                    "claude-haiku-4-5".into(),
+                    "claude-sonnet-4-6".into(),
+                    "claude-opus-4-7".into(),
+                ],
+            },
+        );
+        providers.insert(
             "ollama".into(),
             ProviderConfig {
                 api_key_env: None,

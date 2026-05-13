@@ -78,10 +78,12 @@ Full details: [docs/safety.md](docs/safety.md).
 
 ## Architecture
 
-Seven Rust crates:
+Eight Rust crates:
 
 - `llmsh-llm` — provider-neutral `LlmProvider` trait + neutral message/tool-call types.
 - `llmsh-llm-openai` — OpenAI-compatible HTTP provider.
+- `llmsh-llm-anthropic` — Anthropic Messages API provider (Claude Haiku / Sonnet / Opus).
+- `llmsh-llm-ollama` — local Ollama provider.
 - `llmsh-policy` — `RiskAction` (`Allow` / `Confirm` / `ConfirmStrong` / `Deny`) classifier.
 - `llmsh-tools` — `read_file`, `list_directory`, `run_process`, `glob` behind a `Tool` trait.
 - `llmsh-audit` — append-only JSONL with hash-chained `digest`, redaction, event taxonomy.
@@ -147,7 +149,7 @@ LLMShell is **early-stage experimental software**. Do not use it on production s
 
 Current capabilities:
 
-- OpenAI-compatible provider with runtime model switch (`/model`),
+- providers: OpenAI-compatible, Anthropic (Claude 4.x), Ollama — with runtime model switch (`/model`) and provider switch (`/provider set <name>`),
 - natural-language REPL with slash commands,
 - typed tools: `list_directory`, `read_file`, `run_process`, `glob`,
 - policy engine with sensitive-path protection,

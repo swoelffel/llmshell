@@ -1,5 +1,6 @@
-//! Per-model price table ($ per 1M tokens). May 2026 OpenAI lineup.
-//! Source values: OpenAI public pricing pages (verified manually for v0.2.2).
+//! Per-model price table ($ per 1M tokens). May 2026 OpenAI + Anthropic lineups.
+//! Source values: provider public pricing pages (OpenAI verified for v0.2.2;
+//! Anthropic Claude 4.x added for v0.3.0).
 //! Returns `None` for unknown models so the UI can render `?` rather than a
 //! misleading 0.
 
@@ -86,6 +87,22 @@ pub fn pricing_for(model: &str) -> Option<ModelPricing> {
             cached_input_per_million: 7.50,
             output_per_million: 60.00,
         },
+        // Anthropic Claude 4.x (cached input billed at 10% of base, prompt-cache hits).
+        "claude-haiku-4-5" => ModelPricing {
+            input_per_million: 1.00,
+            cached_input_per_million: 0.10,
+            output_per_million: 5.00,
+        },
+        "claude-sonnet-4-6" => ModelPricing {
+            input_per_million: 3.00,
+            cached_input_per_million: 0.30,
+            output_per_million: 15.00,
+        },
+        "claude-opus-4-7" => ModelPricing {
+            input_per_million: 15.00,
+            cached_input_per_million: 1.50,
+            output_per_million: 75.00,
+        },
         _ => return None,
     })
 }
@@ -104,6 +121,20 @@ mod tests {
         assert_eq!(p.input_per_million, 0.15);
         assert_eq!(p.cached_input_per_million, 0.075);
         assert_eq!(p.output_per_million, 0.60);
+    }
+
+    #[test]
+    fn claude_pricing_lookup() {
+        let h = pricing_for("claude-haiku-4-5").unwrap();
+        assert_eq!(h.input_per_million, 1.00);
+        assert_eq!(h.cached_input_per_million, 0.10);
+        assert_eq!(h.output_per_million, 5.00);
+
+        let o = pricing_for("anthropic:claude-opus-4-7").unwrap();
+        assert_eq!(o.input_per_million, 15.00);
+        assert_eq!(o.output_per_million, 75.00);
+
+        assert!(pricing_for("claude-sonnet-4-6").is_some());
     }
 
     #[test]

@@ -41,6 +41,15 @@ default_model = "openai:gpt-4o-mini"
 base_url = "https://api.openai.com/v1"
 # api_key comes from $OPENAI_API_KEY by default; do not put it here in plaintext.
 
+[providers.anthropic]
+# Claude Haiku / Sonnet / Opus via the Messages API.
+api_key_env = "ANTHROPIC_API_KEY"
+base_url = "https://api.anthropic.com"
+tool_calling = "native"
+# `models[0]` is the model selected when running `/provider set anthropic`.
+# Haiku is the default for the Anthropic provider.
+models = ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"]
+
 [policy]
 # Per-risk-level default action: "allow" | "confirm" | "confirm_strong" | "deny".
 read_only = "allow"
@@ -102,6 +111,7 @@ The merge is a per-key shallow merge: project keys override user keys; user keys
 | Variable | Effect |
 |---|---|
 | `OPENAI_API_KEY` | Required for the OpenAI-compatible provider. |
+| `ANTHROPIC_API_KEY` | Required for the Anthropic provider (Claude Haiku/Sonnet/Opus). |
 | `LLMSH_MODEL` | Override `default_model` for the current session. |
 | `LLMSH_CONFIG` | Use a non-default user config path. |
 | `LLMSH_DEBUG=1` | Enable tracing on stderr. |
