@@ -284,6 +284,33 @@ EOF
   pass "run_setup skips when tty open fails"
 }
 
+test_run_setup_fails_when_tty_setup_command_fails() {
+  tmp="$(new_tmpdir)"
+  dest="$tmp/llmsh"
+  tty_file="$tmp/fake-tty"
+  stderr_log="$tmp/stderr.log"
+  : > "$tty_file"
+
+  cat > "$dest" <<'EOF'
+#!/bin/sh
+exit 23
+EOF
+  chmod +x "$dest"
+
+  setup_mode() { printf '%s\n' "tty"; }
+  tty_device() { printf '%s\n' "$tty_file"; }
+
+  if run_setup "$dest" 2>"$stderr_log"; then
+    fail "run_setup should fail when setup exits nonzero in tty mode"
+  else
+    status=$?
+  fi
+
+  [ "$status" -eq 23 ] || fail "run_setup should preserve tty setup exit status: $status"
+  [ ! -s "$stderr_log" ] || fail "run_setup should not print skip guidance for tty setup command failure"
+  pass "run_setup fails when tty setup command fails"
+}
+
 test_path_contains_dir_matches_exact_entry() {
   PATH="/usr/bin:/tmp/llmsh/bin:/bin"
   path_contains_dir "/tmp/llmsh/bin" || fail "path_contains_dir should match exact PATH entry"
@@ -571,6 +598,61 @@ test_main_skips_setup_when_tty_open_fails() {
   pass "main skips setup when tty open fails"
 }
 
+test_main_fails_when_tty_setup_command_fails() {
+  tmp="$(new_tmpdir)"
+  install_dir="$tmp/install"
+  archive_root="$tmp/archive-root"
+  log="$tmp/run.log"
+  version="v2.4.0"
+  target="x86_64-unknown-linux-gnu"
+  tty_file="$tmp/fake-tty"
+  : > "$tty_file"
+
+  release_dir="$archive_root/llmsh-$version-$target"
+  mkdir -p "$release_dir"
+  cat > "$release_dir/llmsh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$log"
+case "\$1" in
+  --version) exit 0 ;;
+  setup) exit 29 ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x "$release_dir/llmsh"
+  tar -C "$archive_root" -czf "$tmp/archive.tar.gz" "llmsh-$version-$target"
+
+  latest_version() { printf '%s\n' "$version"; }
+  detect_target() { printf '%s\n' "$target"; }
+  stdin_is_interactive() { return 1; }
+  tty_is_available() { return 0; }
+  tty_device() { printf '%s\n' "$tty_file"; }
+  download() {
+    case "$1" in
+      */SHA256SUMS) printf 'unused  archive.tar.gz\n' > "$2" ;;
+      *) cp "$tmp/archive.tar.gz" "$2" ;;
+    esac
+  }
+  checksum_verify() { :; }
+
+  if (
+    LLMSH_INSTALL_DIR="$install_dir"
+    PATH="$PATH"
+    main
+  ) >"$tmp/stdout.log" 2>"$tmp/stderr.log"; then
+    fail "main should fail when tty-mode setup exits nonzero"
+  else
+    status=$?
+  fi
+
+  [ "$status" -eq 29 ] || fail "main should preserve tty-mode setup exit status: $status"
+  [ -x "$install_dir/llmsh" ] || fail "main should still install llmsh before tty setup fails"
+  grep -qx -- '--version' "$log" || fail "main should run --version before tty-mode setup failure"
+  grep -qx -- 'setup' "$log" || fail "main should attempt setup in tty mode"
+  [ ! -s "$tmp/stderr.log" ] || fail "main should not print tty-open skip guidance when setup itself fails"
+  pass "main fails when tty setup command fails"
+}
+
 run_test() {
   restore_install_functions
   "$1"
@@ -591,6 +673,7 @@ run_test test_setup_mode_tty_fallback
 run_test test_setup_mode_skip_env
 run_test test_setup_mode_without_terminal
 run_test test_run_setup_skips_when_tty_open_fails
+run_test test_run_setup_fails_when_tty_setup_command_fails
 run_test test_path_contains_dir_matches_exact_entry
 run_test test_print_path_guidance_when_missing_after_setup
 run_test test_print_path_guidance_is_silent_when_present
@@ -601,3 +684,4 @@ run_test test_main_fails_when_archive_layout_is_wrong
 run_test test_main_skips_setup_without_terminal
 run_test test_main_reports_path_guidance_after_successful_setup
 run_test test_main_skips_setup_when_tty_open_fails
+run_test test_main_fails_when_tty_setup_command_fails

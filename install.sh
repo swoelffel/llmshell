@@ -139,6 +139,11 @@ tty_is_available() {
   ( : < "$tty" > "$tty" ) >/dev/null 2>&1
 }
 
+tty_can_open() {
+  tty="$1"
+  ( : < "$tty" > "$tty" ) >/dev/null 2>&1
+}
+
 print_setup_skip_message() {
   reason="$1"
   printf '%s\n' "llmsh installer: $reason Run 'llmsh setup' or 'llmsh' later from a terminal." >&2
@@ -170,12 +175,13 @@ run_setup() {
       ;;
     tty)
       tty="$(tty_device)"
-      if ( "$dest" setup < "$tty" > "$tty" ) 2>/dev/null; then
-        RUN_SETUP_RESULT="tty"
-      else
+      if ! tty_can_open "$tty"; then
         RUN_SETUP_RESULT="none"
         print_setup_skip_message "unable to open $tty for interactive setup; skipping setup."
+        return 0
       fi
+      RUN_SETUP_RESULT="tty"
+      "$dest" setup < "$tty" > "$tty"
       ;;
     none)
       RUN_SETUP_RESULT="none"
@@ -256,7 +262,7 @@ main() {
   install_binary "$src" "$dest"
   "$dest" --version
 
-  run_setup "$dest"
+  run_setup "$dest" || return $?
   print_path_guidance "$dest_dir" "$dest" "${RUN_SETUP_RESULT:-skip}"
 }
 
