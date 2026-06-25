@@ -549,7 +549,6 @@ async fn validate_setup_choice(
     let provider = build_inner_provider(&outcome.provider, &outcome.model, &cfg)
         .map_err(SetupValidationError::Local)?;
     provider.list_models().await.map(|_| ()).map_err(|err| {
-        let err = anyhow::Error::from(err);
         if is_network_validation_error(&err) {
             SetupValidationError::Network(err)
         } else {
@@ -806,7 +805,7 @@ fn read_trimmed_line(prompt: &str) -> anyhow::Result<String> {
 }
 
 fn read_secret_line(prompt: &str) -> anyhow::Result<String> {
-    read_secret_line_with(prompt, || rpassword::read_password())
+    read_secret_line_with(prompt, rpassword::read_password)
 }
 
 fn read_secret_line_with(
