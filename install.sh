@@ -130,6 +130,50 @@ stdin_is_interactive() {
   [ -t 0 ]
 }
 
+tty_device() {
+  printf '%s\n' "/dev/tty"
+}
+
+tty_is_available() {
+  tty="$(tty_device)"
+  [ -r "$tty" ] && [ -w "$tty" ]
+}
+
+setup_mode() {
+  if [ "${LLMSH_SKIP_SETUP:-0}" = "1" ]; then
+    printf '%s\n' "skip"
+  elif stdin_is_interactive; then
+    printf '%s\n' "stdin"
+  elif tty_is_available; then
+    printf '%s\n' "tty"
+  else
+    printf '%s\n' "none"
+  fi
+}
+
+run_setup() {
+  dest="$1"
+
+  case "$(setup_mode)" in
+    skip)
+      return 0
+      ;;
+    stdin)
+      "$dest" setup
+      ;;
+    tty)
+      tty="$(tty_device)"
+      "$dest" setup < "$tty" > "$tty"
+      ;;
+    none)
+      printf '%s\n' "llmsh installer: no interactive terminal detected; skipping setup. Run 'llmsh setup' or 'llmsh' later from a terminal." >&2
+      ;;
+    *)
+      fail "unexpected setup mode"
+      ;;
+  esac
+}
+
 main() {
   repo="${LLMSH_REPO:-swoelffel/llmshell}"
   version="${LLMSH_VERSION:-$(latest_version "$repo")}"
@@ -168,9 +212,7 @@ main() {
   install_binary "$src" "$dest"
   "$dest" --version
 
-  if stdin_is_interactive && [ "${LLMSH_SKIP_SETUP:-0}" != "1" ]; then
-    "$dest" setup
-  fi
+  run_setup "$dest"
 }
 
 if [ "${LLMSH_INSTALL_TESTING:-0}" != "1" ]; then

@@ -219,6 +219,42 @@ test_install_binary_darwin_postcopy() {
   pass "install_binary darwin postcopy"
 }
 
+test_setup_mode_interactive_stdin() {
+  stdin_is_interactive() { return 0; }
+  tty_is_available() { return 1; }
+
+  got="$(setup_mode)"
+  [ "$got" = "stdin" ] || fail "setup_mode should prefer interactive stdin: $got"
+  pass "setup_mode prefers interactive stdin"
+}
+
+test_setup_mode_tty_fallback() {
+  stdin_is_interactive() { return 1; }
+  tty_is_available() { return 0; }
+
+  got="$(setup_mode)"
+  [ "$got" = "tty" ] || fail "setup_mode should use tty fallback: $got"
+  pass "setup_mode uses tty fallback"
+}
+
+test_setup_mode_skip_env() {
+  stdin_is_interactive() { return 0; }
+  tty_is_available() { return 0; }
+
+  got="$(LLMSH_SKIP_SETUP=1 setup_mode)"
+  [ "$got" = "skip" ] || fail "setup_mode should honor LLMSH_SKIP_SETUP=1: $got"
+  pass "setup_mode honors skip env"
+}
+
+test_setup_mode_without_terminal() {
+  stdin_is_interactive() { return 1; }
+  tty_is_available() { return 1; }
+
+  got="$(setup_mode)"
+  [ "$got" = "none" ] || fail "setup_mode should skip without terminal: $got"
+  pass "setup_mode skips without terminal"
+}
+
 test_main_installs_and_runs_setup() {
   tmp="$(new_tmpdir)"
   install_dir="$tmp/install"
@@ -250,6 +286,42 @@ test_main_installs_and_runs_setup() {
   grep -qx -- '--version' "$log" || fail "main should run --version"
   grep -qx -- 'setup' "$log" || fail "main should run setup"
   pass "main installs and runs setup"
+}
+
+test_main_runs_setup_via_tty_fallback() {
+  tmp="$(new_tmpdir)"
+  install_dir="$tmp/install"
+  log="$tmp/run.log"
+  archive_root="$tmp/archive-root"
+  version="v1.1.0"
+  target="x86_64-unknown-linux-gnu"
+  tty_file="$tmp/fake-tty"
+  : > "$tty_file"
+  make_release_archive "$archive_root" "$version" "$target" "$log" "$tmp/archive.tar.gz"
+
+  latest_version() { printf '%s\n' "$version"; }
+  detect_target() { printf '%s\n' "$target"; }
+  stdin_is_interactive() { return 1; }
+  tty_is_available() { return 0; }
+  tty_device() { printf '%s\n' "$tty_file"; }
+  download() {
+    case "$1" in
+      */SHA256SUMS) printf 'unused  archive.tar.gz\n' > "$2" ;;
+      *) cp "$tmp/archive.tar.gz" "$2" ;;
+    esac
+  }
+  checksum_verify() { :; }
+
+  (
+    LLMSH_INSTALL_DIR="$install_dir"
+    PATH="$PATH"
+    main
+  )
+
+  [ -x "$install_dir/llmsh" ] || fail "main should install llmsh with tty fallback"
+  grep -qx -- '--version' "$log" || fail "main should run --version before tty setup"
+  grep -qx -- 'setup' "$log" || fail "main should run setup via tty fallback"
+  pass "main runs setup via tty fallback"
 }
 
 test_main_skips_setup_when_requested() {
@@ -320,6 +392,43 @@ test_main_fails_when_archive_layout_is_wrong() {
   pass "main rejects wrong archive layout"
 }
 
+test_main_skips_setup_without_terminal() {
+  tmp="$(new_tmpdir)"
+  install_dir="$tmp/install"
+  log="$tmp/run.log"
+  archive_root="$tmp/archive-root"
+  version="v2.1.0"
+  target="x86_64-unknown-linux-gnu"
+  make_release_archive "$archive_root" "$version" "$target" "$log" "$tmp/archive.tar.gz"
+
+  latest_version() { printf '%s\n' "$version"; }
+  detect_target() { printf '%s\n' "$target"; }
+  stdin_is_interactive() { return 1; }
+  tty_is_available() { return 1; }
+  download() {
+    case "$1" in
+      */SHA256SUMS) printf 'unused  archive.tar.gz\n' > "$2" ;;
+      *) cp "$tmp/archive.tar.gz" "$2" ;;
+    esac
+  }
+  checksum_verify() { :; }
+
+  if ! (
+    LLMSH_INSTALL_DIR="$install_dir"
+    PATH="$PATH"
+    main
+  ) >"$tmp/stdout.log" 2>"$tmp/stderr.log"; then
+    fail "main should not fail when setup is skipped without terminal"
+  fi
+
+  [ -x "$install_dir/llmsh" ] || fail "main should install llmsh without terminal"
+  if grep -qx -- 'setup' "$log"; then
+    fail "main should not run setup without terminal"
+  fi
+  grep -q 'Run '\''llmsh setup'\'' or '\''llmsh'\'' later' "$tmp/stderr.log" || fail "main should explain how to continue without terminal"
+  pass "main skips setup without terminal"
+}
+
 test_artifact_name
 test_detect_target_linux
 test_detect_target_darwin
@@ -330,6 +439,12 @@ test_checksum_success_host
 test_checksum_success_sha256sum_override
 test_checksum_success_shasum_override
 test_install_binary_darwin_postcopy
+test_setup_mode_interactive_stdin
+test_setup_mode_tty_fallback
+test_setup_mode_skip_env
+test_setup_mode_without_terminal
 test_main_installs_and_runs_setup
+test_main_runs_setup_via_tty_fallback
 test_main_skips_setup_when_requested
 test_main_fails_when_archive_layout_is_wrong
+test_main_skips_setup_without_terminal
