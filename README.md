@@ -19,7 +19,7 @@ llmsh
 ```
 
 The installer downloads the right macOS/Linux binary from GitHub Releases, verifies its checksum, installs `llmsh` into `~/.local/bin` by default, then launches `llmsh setup`.
-If `~/.local/bin` is not already on your `PATH`, the installer prints the exact `export PATH="~/.local/bin:$PATH"` line to add before running `llmsh` by name.
+If the install directory is not already on your `PATH`, the installer prints the exact `export PATH="...:$PATH"` line for that resolved directory before you run `llmsh` by name.
 
 Use `LLMSH_INSTALL_DIR=/path/to/bin` to choose another install directory, `LLMSH_VERSION=vX.Y.Z` to install a specific release, or `LLMSH_SKIP_SETUP=1` to skip interactive setup.
 

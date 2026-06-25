@@ -136,7 +136,12 @@ tty_device() {
 
 tty_is_available() {
   tty="$(tty_device)"
-  [ -r "$tty" ] && [ -w "$tty" ]
+  ( : < "$tty" > "$tty" ) >/dev/null 2>&1
+}
+
+print_setup_skip_message() {
+  reason="$1"
+  printf '%s\n' "llmsh installer: $reason Run 'llmsh setup' or 'llmsh' later from a terminal." >&2
 }
 
 setup_mode() {
@@ -153,20 +158,28 @@ setup_mode() {
 
 run_setup() {
   dest="$1"
+  RUN_SETUP_RESULT="skip"
 
   case "$(setup_mode)" in
     skip)
       return 0
       ;;
     stdin)
+      RUN_SETUP_RESULT="stdin"
       "$dest" setup
       ;;
     tty)
       tty="$(tty_device)"
-      "$dest" setup < "$tty" > "$tty"
+      if ( "$dest" setup < "$tty" > "$tty" ) 2>/dev/null; then
+        RUN_SETUP_RESULT="tty"
+      else
+        RUN_SETUP_RESULT="none"
+        print_setup_skip_message "unable to open $tty for interactive setup; skipping setup."
+      fi
       ;;
     none)
-      printf '%s\n' "llmsh installer: no interactive terminal detected; skipping setup. Run 'llmsh setup' or 'llmsh' later from a terminal." >&2
+      RUN_SETUP_RESULT="none"
+      print_setup_skip_message "no interactive terminal detected; skipping setup."
       ;;
     *)
       fail "unexpected setup mode"
@@ -243,26 +256,8 @@ main() {
   install_binary "$src" "$dest"
   "$dest" --version
 
-  mode="$(setup_mode)"
-  case "$mode" in
-    skip)
-      ;;
-    stdin)
-      "$dest" setup
-      ;;
-    tty)
-      tty="$(tty_device)"
-      "$dest" setup < "$tty" > "$tty"
-      ;;
-    none)
-      printf '%s\n' "llmsh installer: no interactive terminal detected; skipping setup. Run 'llmsh setup' or 'llmsh' later from a terminal." >&2
-      ;;
-    *)
-      fail "unexpected setup mode"
-      ;;
-  esac
-
-  print_path_guidance "$dest_dir" "$dest" "$mode"
+  run_setup "$dest"
+  print_path_guidance "$dest_dir" "$dest" "${RUN_SETUP_RESULT:-skip}"
 }
 
 if [ "${LLMSH_INSTALL_TESTING:-0}" != "1" ]; then

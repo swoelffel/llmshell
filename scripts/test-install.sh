@@ -30,6 +30,10 @@ cleanup() {
 
 trap cleanup EXIT INT TERM HUP
 
+restore_install_functions() {
+  LLMSH_INSTALL_TESTING=1 . "$ROOT/install.sh"
+}
+
 make_fake_uname_dir() {
   dir="$1"
   sys="$2"
@@ -253,6 +257,31 @@ test_setup_mode_without_terminal() {
   got="$(setup_mode)"
   [ "$got" = "none" ] || fail "setup_mode should skip without terminal: $got"
   pass "setup_mode skips without terminal"
+}
+
+test_run_setup_skips_when_tty_open_fails() {
+  tmp="$(new_tmpdir)"
+  dest="$tmp/llmsh"
+  stdout_log="$tmp/stdout.log"
+  stderr_log="$tmp/stderr.log"
+
+  cat > "$dest" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$dest"
+
+  setup_mode() { printf '%s\n' "tty"; }
+  tty_device() { printf '%s\n' "$tmp/missing-tty"; }
+
+  if ! run_setup "$dest" >"$stdout_log" 2>"$stderr_log"; then
+    fail "run_setup should not fail when tty redirection cannot be opened"
+  fi
+
+  [ ! -s "$stdout_log" ] || fail "run_setup should stay silent on stdout when tty setup fails"
+  grep -q 'unable to open' "$stderr_log" || fail "run_setup should explain tty open failure"
+  grep -q "Run 'llmsh setup' or 'llmsh' later" "$stderr_log" || fail "run_setup should explain how to continue after tty failure"
+  pass "run_setup skips when tty open fails"
 }
 
 test_path_contains_dir_matches_exact_entry() {
@@ -503,26 +532,72 @@ test_main_reports_path_guidance_after_successful_setup() {
   pass "main reports PATH guidance after setup"
 }
 
-test_artifact_name
-test_detect_target_linux
-test_detect_target_darwin
-test_latest_version_parses_release_tag_redirect
-test_latest_version_rejects_non_tag_redirect
-test_checksum_failure
-test_checksum_success_host
-test_checksum_success_sha256sum_override
-test_checksum_success_shasum_override
-test_install_binary_darwin_postcopy
-test_setup_mode_interactive_stdin
-test_setup_mode_tty_fallback
-test_setup_mode_skip_env
-test_setup_mode_without_terminal
-test_path_contains_dir_matches_exact_entry
-test_print_path_guidance_when_missing_after_setup
-test_print_path_guidance_is_silent_when_present
-test_main_installs_and_runs_setup
-test_main_runs_setup_via_tty_fallback
-test_main_skips_setup_when_requested
-test_main_fails_when_archive_layout_is_wrong
-test_main_skips_setup_without_terminal
-test_main_reports_path_guidance_after_successful_setup
+test_main_skips_setup_when_tty_open_fails() {
+  tmp="$(new_tmpdir)"
+  install_dir="$tmp/install"
+  log="$tmp/run.log"
+  archive_root="$tmp/archive-root"
+  version="v2.3.0"
+  target="x86_64-unknown-linux-gnu"
+  make_release_archive "$archive_root" "$version" "$target" "$log" "$tmp/archive.tar.gz"
+
+  latest_version() { printf '%s\n' "$version"; }
+  detect_target() { printf '%s\n' "$target"; }
+  stdin_is_interactive() { return 1; }
+  tty_is_available() { return 0; }
+  tty_device() { printf '%s\n' "$tmp/missing-tty"; }
+  download() {
+    case "$1" in
+      */SHA256SUMS) printf 'unused  archive.tar.gz\n' > "$2" ;;
+      *) cp "$tmp/archive.tar.gz" "$2" ;;
+    esac
+  }
+  checksum_verify() { :; }
+
+  if ! (
+    LLMSH_INSTALL_DIR="$install_dir"
+    PATH="$PATH"
+    main
+  ) >"$tmp/stdout.log" 2>"$tmp/stderr.log"; then
+    fail "main should not fail when tty setup redirection cannot be opened"
+  fi
+
+  [ -x "$install_dir/llmsh" ] || fail "main should still install llmsh when tty setup fails"
+  grep -qx -- '--version' "$log" || fail "main should still run --version before tty setup fallback"
+  if grep -qx -- 'setup' "$log"; then
+    fail "main should not run setup when tty redirection cannot be opened"
+  fi
+  grep -q 'unable to open' "$tmp/stderr.log" || fail "main should explain tty open failure"
+  pass "main skips setup when tty open fails"
+}
+
+run_test() {
+  restore_install_functions
+  "$1"
+}
+
+run_test test_artifact_name
+run_test test_detect_target_linux
+run_test test_detect_target_darwin
+run_test test_latest_version_parses_release_tag_redirect
+run_test test_latest_version_rejects_non_tag_redirect
+run_test test_checksum_failure
+run_test test_checksum_success_host
+run_test test_checksum_success_sha256sum_override
+run_test test_checksum_success_shasum_override
+run_test test_install_binary_darwin_postcopy
+run_test test_setup_mode_interactive_stdin
+run_test test_setup_mode_tty_fallback
+run_test test_setup_mode_skip_env
+run_test test_setup_mode_without_terminal
+run_test test_run_setup_skips_when_tty_open_fails
+run_test test_path_contains_dir_matches_exact_entry
+run_test test_print_path_guidance_when_missing_after_setup
+run_test test_print_path_guidance_is_silent_when_present
+run_test test_main_installs_and_runs_setup
+run_test test_main_runs_setup_via_tty_fallback
+run_test test_main_skips_setup_when_requested
+run_test test_main_fails_when_archive_layout_is_wrong
+run_test test_main_skips_setup_without_terminal
+run_test test_main_reports_path_guidance_after_successful_setup
+run_test test_main_skips_setup_when_tty_open_fails
