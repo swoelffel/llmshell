@@ -25,10 +25,22 @@ detect_target() {
 
 latest_version() {
   repo="$1"
-  url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest")"
-  version="${url##*/}"
+  url="$(latest_release_effective_url "$repo")"
+  case "$url" in
+    "https://github.com/$repo/releases/tag/"*)
+      version="${url##*/}"
+      ;;
+    *)
+      fail "unable to resolve latest release for $repo from redirect: $url"
+      ;;
+  esac
   [ -n "$version" ] || fail "unable to resolve latest release for $repo"
   printf '%s\n' "$version"
+}
+
+latest_release_effective_url() {
+  repo="$1"
+  curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest"
 }
 
 artifact_name() {
@@ -43,27 +55,43 @@ download() {
   curl -fsSL "$url" -o "$dest"
 }
 
+checksum_tool() {
+  if [ -n "${LLMSH_CHECKSUM_TOOL:-}" ]; then
+    printf '%s\n' "$LLMSH_CHECKSUM_TOOL"
+    return 0
+  fi
+
+  case "$(uname -s)" in
+    Linux) printf 'sha256sum\n' ;;
+    Darwin) printf 'shasum\n' ;;
+    *) fail "unsupported operating system for checksum verification" ;;
+  esac
+}
+
 checksum_verify() {
   sums="$1"
   archive="$2"
   archive_dir="$(dirname -- "$archive")"
   archive_base="$(basename -- "$archive")"
   filtered="$(mktemp)"
+  tool="$(checksum_tool)"
 
   if ! awk -v name="$archive_base" '$2 == name { print; found=1 } END { exit(found ? 0 : 1) }' "$sums" > "$filtered"; then
     rm -f "$filtered"
     return 1
   fi
 
-  case "$(uname -s)" in
-    Linux)
+  case "$tool" in
+    sha256sum)
+      command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required for checksum verification"
       if (cd "$archive_dir" && sha256sum -c "$filtered" >/dev/null); then
         status=0
       else
         status=$?
       fi
       ;;
-    Darwin)
+    shasum)
+      command -v shasum >/dev/null 2>&1 || fail "shasum is required for checksum verification"
       if (cd "$archive_dir" && shasum -a 256 -c "$filtered" >/dev/null); then
         status=0
       else
@@ -72,7 +100,7 @@ checksum_verify() {
       ;;
     *)
       rm -f "$filtered"
-      fail "unsupported operating system for checksum verification"
+      fail "unsupported checksum tool: $tool"
       ;;
   esac
 
@@ -135,10 +163,7 @@ main() {
   tar -xzf "$archive" -C "$extract_dir"
 
   src="$extract_dir/llmsh-$version-$target/llmsh"
-  if [ ! -f "$src" ]; then
-    src="$(find "$extract_dir" -type f -name llmsh | head -n 1)"
-  fi
-  [ -n "$src" ] && [ -f "$src" ] || fail "llmsh binary not found in archive"
+  [ -f "$src" ] || fail "expected release layout llmsh-$version-$target/llmsh inside $artifact"
 
   install_binary "$src" "$dest"
   "$dest" --version
