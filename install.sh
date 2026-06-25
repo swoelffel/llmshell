@@ -51,8 +51,8 @@ artifact_name() {
 
 download() {
   url="$1"
-  dest="$2"
-  curl -fsSL "$url" -o "$dest"
+  download_dest="$2"
+  curl -fsSL "$url" -o "$download_dest"
 }
 
 checksum_tool() {

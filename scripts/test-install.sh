@@ -77,6 +77,27 @@ EOF
   chmod +x "$dir/curl"
 }
 
+make_fake_download_curl() {
+  dir="$1"
+  mkdir -p "$dir"
+  cat > "$dir/curl" <<'EOF'
+#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift
+      out="$1"
+      ;;
+  esac
+  shift
+done
+[ -n "$out" ] || exit 2
+printf 'downloaded\n' > "$out"
+EOF
+  chmod +x "$dir/curl"
+}
+
 make_fake_checksum_tool() {
   dir="$1"
   tool="$2"
@@ -149,6 +170,19 @@ test_latest_version_rejects_non_tag_redirect() {
     fail "latest_version should reject non-tag redirect"
   fi
   pass "latest_version rejects non-tag redirect"
+}
+
+test_download_does_not_clobber_installer_dest() {
+  tmp="$(new_tmpdir)"
+  make_fake_download_curl "$tmp/bin"
+  dest="$tmp/install/llmsh"
+  archive="$tmp/archive.tar.gz"
+
+  PATH="$tmp/bin:$PATH" download "https://example.invalid/archive.tar.gz" "$archive"
+
+  [ "$dest" = "$tmp/install/llmsh" ] || fail "download should not clobber installer dest variable: $dest"
+  grep -q '^downloaded$' "$archive" || fail "download should write requested archive path"
+  pass "download does not clobber installer dest"
 }
 
 test_checksum_failure() {
@@ -663,6 +697,7 @@ run_test test_detect_target_linux
 run_test test_detect_target_darwin
 run_test test_latest_version_parses_release_tag_redirect
 run_test test_latest_version_rejects_non_tag_redirect
+run_test test_download_does_not_clobber_installer_dest
 run_test test_checksum_failure
 run_test test_checksum_success_host
 run_test test_checksum_success_sha256sum_override
