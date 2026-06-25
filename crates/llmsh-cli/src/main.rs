@@ -384,7 +384,7 @@ impl SetupPrompts for StdinSetupPrompts {
     fn read_api_key(&mut self, provider: &SetupProvider) -> anyhow::Result<Option<String>> {
         let env_var = provider.api_key_env.as_deref().unwrap_or("API_KEY");
         println!("Enter {env_var} for {}:", provider.display_name);
-        let value = read_trimmed_line("> ")?;
+        let value = read_secret_line("> ")?;
         if value.is_empty() {
             return Ok(None);
         }
@@ -597,6 +597,22 @@ fn read_trimmed_line(prompt: &str) -> anyhow::Result<String> {
     Ok(line.trim().to_string())
 }
 
+fn read_secret_line(prompt: &str) -> anyhow::Result<String> {
+    read_secret_line_with(prompt, || rpassword::read_password())
+}
+
+fn read_secret_line_with(
+    prompt: &str,
+    read_secret: impl FnOnce() -> std::io::Result<String>,
+) -> anyhow::Result<String> {
+    use std::io::Write as _;
+
+    print!("{prompt}");
+    std::io::stdout().flush()?;
+    let line = read_secret()?;
+    Ok(line.trim().to_string())
+}
+
 fn read_index_selection(label: &str, len: usize) -> anyhow::Result<usize> {
     let prompt = format!("{label} [1]: ");
     let input = read_trimmed_line(&prompt)?;
@@ -665,5 +681,11 @@ mod tests {
         let provider = build_inner_provider("mistral", "mistral-medium-3-5", &cfg)
             .expect("mistral provider should build");
         assert_eq!(provider.current_model(), "mistral-medium-3-5");
+    }
+
+    #[test]
+    fn secret_reader_trims_without_using_stdin_lines() {
+        let value = read_secret_line_with("> ", || Ok("  sk-test-secret  \n".to_string())).unwrap();
+        assert_eq!(value, "sk-test-secret");
     }
 }
