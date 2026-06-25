@@ -1,5 +1,5 @@
 use crate::config::Config;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use std::path::{Path, PathBuf};
 
 const MANAGED_BLOCK_START: &str = "# >>> llmsh setup >>>";
@@ -116,8 +116,9 @@ fn run_setup_flow_with_profile(
 
 pub fn load_existing_or_default_config(config_path: &Path) -> Result<Config> {
     if config_path.exists() {
-        let s = std::fs::read_to_string(config_path)?;
-        Ok(toml::from_str(&s).unwrap_or_else(|_| Config::defaults()))
+        let s = std::fs::read_to_string(config_path)
+            .with_context(|| format!("read config {}", config_path.display()))?;
+        toml::from_str(&s).with_context(|| format!("parse config {}", config_path.display()))
     } else {
         Ok(Config::defaults())
     }
@@ -349,6 +350,19 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("openai has no configured models"));
+    }
+
+    #[test]
+    fn load_existing_config_reports_parse_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "default_model = [").unwrap();
+
+        let err = load_existing_or_default_config(&path)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("parse config"));
     }
 
     #[test]
