@@ -482,11 +482,34 @@ async fn validate_setup_choice(
     let cfg = load_existing_or_default_config(&config_path).map_err(SetupValidationError::Local)?;
     let provider = build_inner_provider(&outcome.provider, &outcome.model, &cfg)
         .map_err(SetupValidationError::Local)?;
-    provider
-        .list_models()
-        .await
-        .map(|_| ())
-        .map_err(|err| SetupValidationError::Network(err.into()))
+    provider.list_models().await.map(|_| ()).map_err(|err| {
+        let err = anyhow::Error::from(err);
+        if is_network_validation_error(&err) {
+            SetupValidationError::Network(err)
+        } else {
+            SetupValidationError::Local(err)
+        }
+    })
+}
+
+fn is_network_validation_error(err: &anyhow::Error) -> bool {
+    const NETWORK_PATTERNS: &[&str] = &[
+        "connection refused",
+        "failed to connect",
+        "dns error",
+        "name or service not known",
+        "network unreachable",
+        "operation timed out",
+        "timed out",
+        "reqwest connect error",
+    ];
+
+    err.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        NETWORK_PATTERNS
+            .iter()
+            .any(|pattern| message.contains(pattern))
+    })
 }
 
 fn build_provider(cfg: &Config) -> anyhow::Result<ProviderWithModel> {
@@ -763,6 +786,37 @@ mod tests {
     fn secret_reader_trims_without_using_stdin_lines() {
         let value = read_secret_line_with("> ", || Ok("  sk-test-secret  \n".to_string())).unwrap();
         assert_eq!(value, "sk-test-secret");
+    }
+
+    #[test]
+    fn network_validation_error_detection_is_conservative() {
+        for network_message in [
+            "error sending request for url (https://api.openai.com/v1/models): connection refused",
+            "dns error: failed to lookup address information: Name or service not known",
+            "operation timed out",
+            "network unreachable",
+            "request failed: timed out",
+            "reqwest connect error",
+        ] {
+            assert!(
+                is_network_validation_error(&anyhow::anyhow!(network_message)),
+                "expected network classification for: {network_message}"
+            );
+        }
+
+        for fatal_message in [
+            "openai http 401: invalid_api_key",
+            "anthropic http 403: forbidden",
+            "mistral http 429: rate limit exceeded",
+            "provider openai not configured",
+            "env var OPENAI_API_KEY not set",
+            "api error: invalid x-api-key",
+        ] {
+            assert!(
+                !is_network_validation_error(&anyhow::anyhow!(fatal_message)),
+                "expected fatal classification for: {fatal_message}"
+            );
+        }
     }
 
     #[tokio::test]
