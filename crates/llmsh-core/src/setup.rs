@@ -30,7 +30,9 @@ pub struct SetupOutcome {
     pub provider: String,
     pub model: String,
     pub env_var: Option<String>,
-    pub profile_updated: Option<PathBuf>,
+    pub env_value: Option<String>,
+    pub persist_env: bool,
+    pub profile_path: Option<PathBuf>,
 }
 
 pub fn run_setup_flow(
@@ -53,7 +55,7 @@ fn run_setup_flow_with_profile(
     profile: Option<PathBuf>,
     mut env_setter: impl FnMut(&str, &str),
 ) -> Result<SetupOutcome> {
-    let (cfg, _) = crate::config::load::load_or_create_user(config_path)?;
+    let cfg = load_existing_or_default_config(config_path)?;
     let providers = available_providers(&cfg);
     if providers.is_empty() {
         return Err(anyhow!("no providers configured"));
@@ -66,18 +68,17 @@ fn run_setup_flow_with_profile(
         .find(|candidate| candidate.name == provider_name)
         .ok_or_else(|| anyhow!("unknown provider: {provider_name}"))?;
 
-    let mut profile_updated = None;
+    let mut env_value = None;
+    let mut persist_env = false;
     if let Some(env_var) = provider.api_key_env.as_deref() {
         if std::env::var(env_var).is_err() {
             let api_key = prompts
                 .read_api_key(provider)?
                 .ok_or_else(|| anyhow!("setup canceled before API key entry"))?;
             env_setter(env_var, &api_key);
+            env_value = Some(api_key);
             if let Some(profile_path) = profile.as_ref() {
-                if prompts.confirm_persist_env(profile_path, env_var)? {
-                    upsert_managed_env_block(profile_path, env_var, &api_key)?;
-                    profile_updated = Some(profile_path.clone());
-                }
+                persist_env = prompts.confirm_persist_env(profile_path, env_var)?;
             }
         }
     }
@@ -103,19 +104,46 @@ fn run_setup_flow_with_profile(
         None => models[0].clone(),
     };
 
-    crate::config::persist::set_default_model_and_provider(
-        config_path,
-        &crate::config::Config::defaults(),
-        &provider_name,
-        &model,
-    )?;
-
     Ok(SetupOutcome {
         provider: provider_name,
         model,
         env_var: provider.api_key_env.clone(),
-        profile_updated,
+        env_value,
+        persist_env,
+        profile_path: profile,
     })
+}
+
+pub fn load_existing_or_default_config(config_path: &Path) -> Result<Config> {
+    if config_path.exists() {
+        let s = std::fs::read_to_string(config_path)?;
+        Ok(toml::from_str(&s).unwrap_or_else(|_| Config::defaults()))
+    } else {
+        Ok(Config::defaults())
+    }
+}
+
+pub fn finalize_setup(config_path: &Path, outcome: &SetupOutcome) -> Result<Option<PathBuf>> {
+    let _ = crate::config::load::load_or_create_user(config_path)?;
+    crate::config::persist::set_default_model_and_provider(
+        config_path,
+        &crate::config::Config::defaults(),
+        &outcome.provider,
+        &outcome.model,
+    )?;
+
+    if outcome.persist_env {
+        if let (Some(profile_path), Some(env_var), Some(env_value)) = (
+            outcome.profile_path.as_ref(),
+            outcome.env_var.as_deref(),
+            outcome.env_value.as_deref(),
+        ) {
+            upsert_managed_env_block(profile_path, env_var, env_value)?;
+            return Ok(Some(profile_path.clone()));
+        }
+    }
+
+    Ok(None)
 }
 
 pub fn available_providers(cfg: &Config) -> Vec<SetupProvider> {
@@ -393,11 +421,10 @@ mod tests {
     }
 
     #[test]
-    fn setup_flow_persists_provider_model_and_profile_block() {
+    fn setup_flow_defers_persistence_until_finalize() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = tmp.path().join("config.toml");
         let profile = tmp.path().join(".zshrc");
-        std::fs::write(&profile, "").unwrap();
         let mut prompts =
             FakePrompts::new("openai", "sk-test", "gpt-4.1-mini", true, profile.clone());
         let mut envs = Vec::new();
@@ -411,13 +438,21 @@ mod tests {
         assert_eq!(outcome.provider, "openai");
         assert_eq!(outcome.model, "gpt-4.1-mini");
         assert_eq!(outcome.env_var.as_deref(), Some("OPENAI_API_KEY"));
-        assert_eq!(outcome.profile_updated.as_deref(), Some(profile.as_path()));
+        assert_eq!(outcome.env_value.as_deref(), Some("sk-test"));
+        assert!(outcome.persist_env);
+        assert_eq!(outcome.profile_path.as_deref(), Some(profile.as_path()));
+        assert!(!cfg.exists());
+        assert!(!profile.exists());
+        assert_eq!(envs, vec![("OPENAI_API_KEY".into(), "sk-test".into())]);
+
+        let profile_updated = finalize_setup(&cfg, &outcome).unwrap();
+
+        assert_eq!(profile_updated.as_deref(), Some(profile.as_path()));
         assert!(std::fs::read_to_string(&cfg)
             .unwrap()
             .contains("default_model = \"openai:gpt-4.1-mini\""));
         assert!(std::fs::read_to_string(&profile)
             .unwrap()
             .contains("export OPENAI_API_KEY='sk-test'"));
-        assert_eq!(envs, vec![("OPENAI_API_KEY".into(), "sk-test".into())]);
     }
 }

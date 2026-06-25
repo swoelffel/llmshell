@@ -18,7 +18,10 @@ use llmsh_core::model_cmd::ModelListCache;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
 use llmsh_core::repl::{Repl, ReplState};
-use llmsh_core::setup::{run_setup_flow, SetupPrompts, SetupProvider};
+use llmsh_core::setup::{
+    finalize_setup, load_existing_or_default_config, run_setup_flow, SetupOutcome, SetupPrompts,
+    SetupProvider,
+};
 use llmsh_llm::provider::LlmProvider;
 use llmsh_llm_anthropic::provider::{
     AnthropicConfig, AnthropicProvider, DEFAULT_MAX_TOKENS as ANTHROPIC_DEFAULT_MAX_TOKENS,
@@ -415,22 +418,43 @@ impl SetupPrompts for StdinSetupPrompts {
 }
 
 async fn run_interactive_setup(config_path: &Path) -> anyhow::Result<()> {
-    let mut prompts = StdinSetupPrompts;
-    let outcome = run_setup_flow(config_path, &mut prompts, |key, value| {
-        std::env::set_var(key, value);
-    })?;
+    run_interactive_setup_with(
+        config_path,
+        &mut StdinSetupPrompts,
+        |key, value| std::env::set_var(key, value),
+        validate_setup_choice,
+        confirm_finish_anyway,
+    )
+    .await
+}
 
-    let (cfg, _) = load_or_create_user(config_path)?;
-    match build_inner_provider(&outcome.provider, &outcome.model, &cfg) {
-        Ok(provider) => {
-            if let Err(err) = provider.list_models().await {
-                eprintln!("Provider validation failed: {err}");
-                if !confirm_finish_anyway()? {
-                    anyhow::bail!("setup aborted after provider validation failure");
-                }
-            }
+enum SetupValidationError {
+    Local(anyhow::Error),
+    Network(anyhow::Error),
+}
+
+async fn run_interactive_setup_with<P, E, V, C, Fut>(
+    config_path: &Path,
+    prompts: &mut P,
+    env_setter: E,
+    validate: V,
+    mut confirm_finish_anyway: C,
+) -> anyhow::Result<()>
+where
+    P: SetupPrompts,
+    E: FnMut(&str, &str),
+    V: Fn(PathBuf, SetupOutcome) -> Fut,
+    C: FnMut() -> anyhow::Result<bool>,
+    Fut: std::future::Future<Output = Result<(), SetupValidationError>>,
+{
+    let outcome = run_setup_flow(config_path, prompts, env_setter)?;
+
+    match validate(config_path.to_path_buf(), outcome.clone()).await {
+        Ok(()) => {}
+        Err(SetupValidationError::Local(err)) => {
+            anyhow::bail!("provider validation failed before setup could be saved: {err}");
         }
-        Err(err) => {
+        Err(SetupValidationError::Network(err)) => {
             eprintln!("Provider validation failed: {err}");
             if !confirm_finish_anyway()? {
                 anyhow::bail!("setup aborted after provider validation failure");
@@ -438,16 +462,31 @@ async fn run_interactive_setup(config_path: &Path) -> anyhow::Result<()> {
         }
     }
 
+    let profile_updated = finalize_setup(config_path, &outcome)?;
     println!(
         "Saved default model {}:{} in {}.",
         outcome.provider,
         outcome.model,
         config_path.display()
     );
-    if let Some(profile) = outcome.profile_updated {
+    if let Some(profile) = profile_updated {
         println!("Updated {}.", profile.display());
     }
     Ok(())
+}
+
+async fn validate_setup_choice(
+    config_path: PathBuf,
+    outcome: SetupOutcome,
+) -> Result<(), SetupValidationError> {
+    let cfg = load_existing_or_default_config(&config_path).map_err(SetupValidationError::Local)?;
+    let provider = build_inner_provider(&outcome.provider, &outcome.model, &cfg)
+        .map_err(SetupValidationError::Local)?;
+    provider
+        .list_models()
+        .await
+        .map(|_| ())
+        .map_err(|err| SetupValidationError::Network(err.into()))
 }
 
 fn build_provider(cfg: &Config) -> anyhow::Result<ProviderWithModel> {
@@ -636,6 +675,43 @@ fn confirm_finish_anyway() -> anyhow::Result<bool> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::path::Path;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct FakePrompts {
+        provider: Option<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+        persist_env: bool,
+    }
+
+    impl SetupPrompts for FakePrompts {
+        fn choose_provider(
+            &mut self,
+            _providers: &[SetupProvider],
+        ) -> anyhow::Result<Option<String>> {
+            Ok(self.provider.take())
+        }
+
+        fn read_api_key(&mut self, _provider: &SetupProvider) -> anyhow::Result<Option<String>> {
+            Ok(self.api_key.take())
+        }
+
+        fn choose_model(
+            &mut self,
+            _provider: &str,
+            _models: &[String],
+        ) -> anyhow::Result<Option<String>> {
+            Ok(self.model.take())
+        }
+
+        fn confirm_persist_env(&mut self, _profile: &Path, _env_var: &str) -> anyhow::Result<bool> {
+            Ok(self.persist_env)
+        }
+    }
 
     #[test]
     fn parses_setup_subcommand() {
@@ -687,5 +763,85 @@ mod tests {
     fn secret_reader_trims_without_using_stdin_lines() {
         let value = read_secret_line_with("> ", || Ok("  sk-test-secret  \n".to_string())).unwrap();
         assert_eq!(value, "sk-test-secret");
+    }
+
+    #[tokio::test]
+    async fn aborting_after_network_validation_failure_does_not_write_config_or_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_path = tmp.path().join("config.toml");
+        let profile_path = tmp.path().join(".zshrc");
+        let old_home = std::env::var_os("HOME");
+        let old_shell = std::env::var_os("SHELL");
+        std::env::set_var("HOME", tmp.path());
+        std::env::set_var("SHELL", "/bin/zsh");
+
+        let mut prompts = FakePrompts {
+            provider: Some("openai".into()),
+            api_key: Some("sk-test".into()),
+            model: Some("gpt-4.1-mini".into()),
+            persist_env: true,
+        };
+
+        let result = run_interactive_setup_with(
+            &cfg_path,
+            &mut prompts,
+            |_, _| {},
+            |_path, _outcome| async {
+                Err(SetupValidationError::Network(anyhow::anyhow!(
+                    "network down"
+                )))
+            },
+            || Ok(false),
+        )
+        .await;
+
+        if let Some(home) = old_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(shell) = old_shell {
+            std::env::set_var("SHELL", shell);
+        } else {
+            std::env::remove_var("SHELL");
+        }
+
+        assert!(result.is_err());
+        assert!(!cfg_path.exists());
+        assert!(!profile_path.exists());
+    }
+
+    #[tokio::test]
+    async fn local_provider_construction_errors_do_not_offer_finish_anyway() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_path = tmp.path().join("config.toml");
+        let mut prompts = FakePrompts {
+            provider: Some("openai".into()),
+            api_key: Some("sk-test".into()),
+            model: Some("gpt-4.1-mini".into()),
+            persist_env: false,
+        };
+        let confirm_calls = Arc::new(AtomicUsize::new(0));
+        let confirm_calls_for_closure = confirm_calls.clone();
+
+        let result = run_interactive_setup_with(
+            &cfg_path,
+            &mut prompts,
+            |_, _| {},
+            |_path, _outcome| async {
+                Err(SetupValidationError::Local(anyhow::anyhow!(
+                    "env var OPENAI_API_KEY not set"
+                )))
+            },
+            move || {
+                confirm_calls_for_closure.fetch_add(1, Ordering::SeqCst);
+                Ok(true)
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(confirm_calls.load(Ordering::SeqCst), 0);
+        assert!(!cfg_path.exists());
     }
 }
