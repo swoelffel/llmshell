@@ -53,8 +53,9 @@ jobs:
 
       - name: Enforce minimum coverage on critical crates
         run: |
-          cargo llvm-cov --workspace --locked \
-            --fail-under-lines 87 \
-            --package llmsh-policy \
-            --package llmsh-audit \
-            --package llmsh-redact
+          for package in llmsh-policy llmsh-audit llmsh-redact; do
+            echo "Checking coverage floor for ${package}"
+            cargo llvm-cov --locked \
+              --fail-under-lines 87 \
+              --package "${package}"
+          done
