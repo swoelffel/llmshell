@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 const MANAGED_BLOCK_START: &str = "# >>> llmsh setup >>>";
 const MANAGED_BLOCK_END: &str = "# <<< llmsh setup <<<";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellProfileSyntax {
+    Posix,
+    Fish,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupProvider {
     pub name: String,
@@ -63,11 +69,43 @@ fn shell_escape_single_quoted(value: &str) -> String {
     value.replace('\'', "'\"'\"'")
 }
 
+fn fish_escape_single_quoted(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+fn detect_profile_syntax(profile: &Path) -> ShellProfileSyntax {
+    if profile.file_name().and_then(|name| name.to_str()) == Some("config.fish")
+        && profile
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            == Some("fish")
+    {
+        ShellProfileSyntax::Fish
+    } else {
+        ShellProfileSyntax::Posix
+    }
+}
+
 pub fn render_managed_env_block(env_var: &str, value: &str) -> String {
-    format!(
-        "{MANAGED_BLOCK_START}\nexport {env_var}='{}'\n{MANAGED_BLOCK_END}\n",
-        shell_escape_single_quoted(value)
-    )
+    render_managed_env_block_for_syntax(ShellProfileSyntax::Posix, env_var, value)
+}
+
+fn render_managed_env_block_for_syntax(
+    syntax: ShellProfileSyntax,
+    env_var: &str,
+    value: &str,
+) -> String {
+    let export_line = match syntax {
+        ShellProfileSyntax::Posix => {
+            format!("export {env_var}='{}'", shell_escape_single_quoted(value))
+        }
+        ShellProfileSyntax::Fish => {
+            format!("set -gx {env_var} '{}'", fish_escape_single_quoted(value))
+        }
+    };
+
+    format!("{MANAGED_BLOCK_START}\n{export_line}\n{MANAGED_BLOCK_END}\n")
 }
 
 pub fn upsert_managed_env_block(profile: &Path, env_var: &str, value: &str) -> Result<()> {
@@ -77,7 +115,8 @@ pub fn upsert_managed_env_block(profile: &Path, env_var: &str, value: &str) -> R
         String::new()
     };
 
-    let rendered = render_managed_env_block(env_var, value);
+    let rendered =
+        render_managed_env_block_for_syntax(detect_profile_syntax(profile), env_var, value);
     let updated = match (
         existing.find(MANAGED_BLOCK_START),
         existing.find(MANAGED_BLOCK_END),
@@ -147,6 +186,37 @@ mod tests {
     }
 
     #[test]
+    fn detect_shell_profile_prefers_existing_fish_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fish_dir = tmp.path().join(".config/fish");
+        std::fs::create_dir_all(&fish_dir).unwrap();
+        let fish_profile = fish_dir.join("config.fish");
+        std::fs::write(&fish_profile, "").unwrap();
+
+        let detected = detect_shell_profile(tmp.path(), Some("/usr/local/bin/fish"));
+
+        assert_eq!(detected, Some(fish_profile));
+    }
+
+    #[test]
+    fn detect_shell_profile_fish_falls_back_to_profile_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let detected = detect_shell_profile(tmp.path(), Some("/opt/homebrew/bin/fish"));
+
+        assert_eq!(detected, Some(tmp.path().join(".profile")));
+    }
+
+    #[test]
+    fn detect_shell_profile_defaults_to_profile_when_shell_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let detected = detect_shell_profile(tmp.path(), None);
+
+        assert_eq!(detected, Some(tmp.path().join(".profile")));
+    }
+
+    #[test]
     fn upsert_env_block_is_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let profile = tmp.path().join(".zshrc");
@@ -158,5 +228,21 @@ mod tests {
         assert_eq!(result.matches("# >>> llmsh setup >>>").count(), 1);
         assert!(result.contains("export OPENAI_API_KEY='sk-two'"));
         assert!(!result.contains("sk-one"));
+    }
+
+    #[test]
+    fn upsert_env_block_uses_fish_syntax_for_fish_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fish_dir = tmp.path().join(".config/fish");
+        std::fs::create_dir_all(&fish_dir).unwrap();
+        let profile = fish_dir.join("config.fish");
+        std::fs::write(&profile, "set -gx PATH $HOME/bin $PATH\n").unwrap();
+
+        upsert_managed_env_block(&profile, "OPENAI_API_KEY", "sk-test'value").unwrap();
+
+        let result = std::fs::read_to_string(&profile).unwrap();
+        assert!(result.contains("set -gx PATH $HOME/bin $PATH"));
+        assert!(result.contains("set -gx OPENAI_API_KEY 'sk-test\\'value'"));
+        assert!(!result.contains("export OPENAI_API_KEY"));
     }
 }
