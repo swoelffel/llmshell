@@ -17,6 +17,7 @@ pub mod provider_cmd;
 pub mod raw_shell;
 pub mod repl;
 pub mod session_stats;
+pub mod setup;
 pub mod slash_complete;
 pub mod status_prompt;
 pub mod swappable;
