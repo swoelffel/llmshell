@@ -14,12 +14,16 @@ LLMShell (`llmsh`) lets you describe terminal tasks in natural language. The age
 ## Quick start
 
 ```bash
-cargo install --git https://github.com/swoelffel/llmshell --locked
-export OPENAI_API_KEY=sk-...          # or ANTHROPIC_API_KEY / MISTRAL_API_KEY
+curl -fsSL https://raw.githubusercontent.com/swoelffel/llmshell/main/install.sh | sh
 llmsh
 ```
 
-Four providers are supported out of the box: OpenAI-compatible APIs, Anthropic (Claude Haiku / Sonnet / Opus), Mistral, and Ollama for local models. Switch at runtime with `/provider set mistral` or `/model use mistral:mistral-small-2603`.
+The installer downloads the right macOS/Linux binary from GitHub Releases, verifies its checksum, installs `llmsh` into `~/.local/bin` by default, then launches `llmsh setup` when an interactive terminal is available. Otherwise, run `llmsh` on first launch and follow the same setup flow there.
+If the install directory is not already on your `PATH`, the installer prints the exact `export PATH="...:$PATH"` line for that resolved directory before you run `llmsh` by name.
+
+Use `LLMSH_INSTALL_DIR=/path/to/bin` to choose another install directory, `LLMSH_VERSION=vX.Y.Z` to install a specific release, or `LLMSH_SKIP_SETUP=1` to skip interactive setup.
+
+Four providers are supported out of the box: OpenAI-compatible APIs, Anthropic (Claude Haiku / Sonnet / Opus), Mistral, and Ollama for local models. Use `llmsh setup` to choose a provider, enter the required API key, and persist your default model. Switch later at runtime with `/provider set mistral` or `/model set mistral:mistral-small-2603`.
 
 On first launch, `llmsh` writes a default user config (`~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS, `%APPDATA%\llmsh\config.toml` on Windows). A project-level `.llmsh.toml` in the current directory merges on top. See [docs/configuration.md](docs/configuration.md).
 
@@ -95,7 +99,21 @@ Eleven Rust crates:
 
 ## Installation
 
-### From source (recommended for now)
+### Release installer (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/swoelffel/llmshell/main/install.sh | sh
+```
+
+The installer supports:
+
+- `LLMSH_INSTALL_DIR=/path/to/bin` to change the install directory.
+- `LLMSH_VERSION=vX.Y.Z` to pin a specific release.
+- `LLMSH_SKIP_SETUP=1` to skip the interactive `llmsh setup` step.
+
+If the chosen install directory is not on your `PATH`, the installer prints the exact export command to add it. Setup still runs through the absolute installed binary when an interactive terminal is available.
+
+### From source (contributors)
 
 ```bash
 cargo install --git https://github.com/swoelffel/llmshell --locked
@@ -109,10 +127,6 @@ cd llmshell
 cargo build --release
 ./target/release/llmsh
 ```
-
-### Pre-built binaries
-
-Pre-built Linux/macOS binaries, an `install.sh` script and a Homebrew tap are tracked on the [roadmap](ROADMAP.md) for v0.3.
 
 ### Reinstalling after a rebuild
 
@@ -140,9 +154,9 @@ A project-level `.llmsh.toml` merges on top of the user config.
 
 Useful environment variables:
 
-- `OPENAI_API_KEY` — required for the OpenAI provider.
-- `ANTHROPIC_API_KEY` — required for the Anthropic provider (Claude).
-- `MISTRAL_API_KEY` — required for the Mistral provider.
+- `OPENAI_API_KEY` — required for the OpenAI provider if you configure it manually instead of via `llmsh setup`.
+- `ANTHROPIC_API_KEY` — required for the Anthropic provider (Claude) if you configure it manually instead of via `llmsh setup`.
+- `MISTRAL_API_KEY` — required for the Mistral provider if you configure it manually instead of via `llmsh setup`.
 - `LLMSH_MODEL` — override default model for a session.
 - `LLMSH_CONFIG` — alternative config path.
 - `LLMSH_DEBUG=1` — tracing on stderr.
@@ -166,11 +180,11 @@ Current capabilities:
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). Highlights for v0.3: release binaries, install script, Homebrew tap, demo asciinema.
+See [ROADMAP.md](ROADMAP.md). Highlights for upcoming work include a Homebrew tap and a demo asciinema.
 
 ## Contributing
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: please follow [SECURITY.md](SECURITY.md).
+Contributions welcome — start with [docs/contributing.md](docs/contributing.md) for the Git flow and review expectations, then see [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide. Security issues: please follow [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -30,6 +30,22 @@ User config file mode: `0o600`. Throughout the rest of this document, `~/.config
 
 Override the config path with `--config <path>` or `LLMSH_CONFIG`.
 
+## First-run setup
+
+Run `llmsh setup` to choose a provider, enter the required API key, choose a model, and persist the selected `default_model`.
+
+For API providers, setup uses the existing environment-variable model:
+
+| Provider | Env var |
+|---|---|
+| OpenAI | `OPENAI_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| Mistral | `MISTRAL_API_KEY` |
+
+Setup asks before editing your shell profile and writes a managed block that can be replaced idempotently by later setup runs.
+
+If you prefer to manage credentials yourself, skip setup or rerun it later and keep using the manual environment variables documented below.
+
 ## Sample `config.toml`
 
 ```toml
@@ -115,6 +131,8 @@ write = "confirm_strong"   # be stricter about writes here.
 The merge is a per-key shallow merge: project keys override user keys; user keys override defaults.
 
 ## Environment variables
+
+Manual fallback when you do not want `llmsh setup` to manage your shell profile:
 
 | Variable | Effect |
 |---|---|
