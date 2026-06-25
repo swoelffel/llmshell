@@ -161,7 +161,18 @@ test_checksum_success_host() {
   tmp="$(new_tmpdir)"
   archive="$tmp/file.tar.gz"
   printf 'content\n' > "$archive"
-  checksum="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  checksum_tool="$(checksum_tool)"
+  case "$checksum_tool" in
+    sha256sum)
+      checksum="$(sha256sum "$archive" | awk '{print $1}')"
+      ;;
+    shasum)
+      checksum="$(shasum -a 256 "$archive" | awk '{print $1}')"
+      ;;
+    *)
+      fail "unsupported checksum tool: $checksum_tool"
+      ;;
+  esac
   printf '%s  %s\n' "$checksum" "file.tar.gz" > "$tmp/SHA256SUMS"
   checksum_verify "$tmp/SHA256SUMS" "$archive" || fail "checksum success should pass on host"
   pass "checksum success host"
