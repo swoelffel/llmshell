@@ -1,5 +1,15 @@
 # Runbook — Local install / upgrade of `llmsh`
 
+## End-user install
+
+For normal macOS/Linux users, prefer the release installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/swoelffel/llmshell/main/install.sh | sh
+```
+
+The rest of this runbook is for developer rebuilds from a checked-out workspace.
+
 Use this every time you need the freshly built `llmsh` binary on the developer machine (typically after a feature branch, a release bump, or a config-shape change). It replaces ad-hoc `cp` flows which break on macOS Sequoia (provenance xattr → `zsh: killed`).
 
 ## Prerequisites
@@ -87,6 +97,6 @@ If a step fails, **do not** declare the deploy complete. Re-run from §1 or §2 
 | `zsh: killed llmsh …` (no message) | macOS provenance xattr / broken adhoc sig after `cp` | `xattr -c … && codesign --force --sign - …` |
 | `llmsh --version` reports the old version | `cargo install` not run / binary copied to a path not on `$PATH` | re-run §1; verify `which llmsh` |
 | `/provider` does not list the new provider | User config predates the release; defaults not merged into existing file | §2 — append the missing block |
-| `env var ANTHROPIC_API_KEY not set` | API key not exported in current shell | `export ANTHROPIC_API_KEY=…` in the shell that launches `llmsh` |
-| `env var MISTRAL_API_KEY not set` | API key not exported in current shell | `export MISTRAL_API_KEY=…` in the shell that launches `llmsh` |
+| `env var ANTHROPIC_API_KEY not set` | API key not exported in current shell | run `llmsh setup`, or `export ANTHROPIC_API_KEY=…` in the shell that launches `llmsh` |
+| `env var MISTRAL_API_KEY not set` | API key not exported in current shell | run `llmsh setup`, or `export MISTRAL_API_KEY=…` in the shell that launches `llmsh` |
 | `unknown provider "X"; supported: …` | Binary is older than the config; `cargo install` was skipped | re-run §1 |

@@ -2,6 +2,8 @@
 
 Illustrative sessions showing how LLMShell behaves in common situations. Output is stylised — exact wording depends on the model.
 
+For first-run provider selection and API-key setup, use `llmsh setup`. The examples below focus on REPL behavior after onboarding. Manual `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `MISTRAL_API_KEY` exports remain available if you prefer to manage credentials yourself.
+
 ## Exploring a repository
 
 ```text
