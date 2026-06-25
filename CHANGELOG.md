@@ -2,6 +2,31 @@
 
 All notable changes to LLMShell are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches v1.0.
 
+## [0.3.3] — 2026-06-25
+
+### Added
+
+- **End-user installer** — `install.sh` now installs prebuilt macOS/Linux
+  release binaries from GitHub Releases, verifies SHA256 checksums, clears
+  macOS provenance metadata, ad-hoc signs the binary when available, and prints
+  precise `PATH` guidance when `~/.local/bin` is not already reachable.
+- **Interactive onboarding** — new `llmsh setup` flow to choose a provider,
+  enter an API key without echoing it, select a default model, and optionally
+  persist the provider key into a managed shell-profile block.
+- **First-run recovery** — a fresh non-interactive launch now prints actionable
+  setup instructions, while an interactive missing-key startup can hand off to
+  `llmsh setup` and retry provider initialization before the REPL starts.
+- **Release automation** — tag pushes now build Linux/macOS release archives
+  for `x86_64` and `aarch64` targets and publish a `SHA256SUMS` file.
+
+### Documentation
+
+- README and configuration docs now present the release installer and
+  `llmsh setup` as the primary onboarding path.
+- Added public Git flow guidance in `docs/contributing.md`.
+- Local install runbook now separates end-user release installs from developer
+  rebuild installs.
+
 ## [0.3.2] — 2026-06-25
 
 ### Added
@@ -194,7 +219,8 @@ Initial slice. Establishes the crate split and the core pipeline:
 - Confirmation gate trait with `AlwaysYesGate` / `AlwaysNoGate` test impls.
 - Per-tool timeout and `CancellationToken` in the executor.
 
-[Unreleased]: https://github.com/swoelffel/llmshell/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/swoelffel/llmshell/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/swoelffel/llmshell/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/swoelffel/llmshell/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/swoelffel/llmshell/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/swoelffel/llmshell/compare/v0.2.15...v0.3.0

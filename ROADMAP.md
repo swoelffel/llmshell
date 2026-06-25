@@ -8,15 +8,15 @@ Goal: drop the time-to-first-session below two minutes.
 
 ### Foundation
 
-- `.github/workflows/release.yml` triggered on `v*` tags — cross-compiles four targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`.
-- Each release attaches `llmsh-<target>.tar.gz` archives plus a `SHA256SUMS` file.
-- `cargo install --git` documented as the official source path until crates.io publication.
+- `.github/workflows/release.yml` triggered on `v*` tags — builds four targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`.
+- Each release attaches `llmsh-vX.Y.Z-<target>.tar.gz` archives plus a `SHA256SUMS` file.
+- `curl -fsSL https://raw.githubusercontent.com/swoelffel/llmshell/main/install.sh | sh` documented as the official end-user path, with `cargo install --git` retained for source installs.
 
 ### Distribution channels
 
 Tiered by reach-per-effort. Foundation above is a prerequisite for every channel except cargo.
 
-- **`install.sh`** (`curl -fsSL https://… | sh`) — universal Linux/macOS path. Detects OS+arch, downloads the matching archive from GitHub Releases, verifies SHA256, installs to `~/.local/bin` (or `/usr/local/bin` with sudo). Single-file Bash; covers ~90 % of the Linux need.
+- **`install.sh`** (`curl -fsSL https://… | sh`) — universal Linux/macOS path. Detects OS+arch, downloads the matching archive from GitHub Releases, verifies SHA256, installs to `~/.local/bin` by default, then runs `llmsh setup` when a terminal is available.
 - **Homebrew tap** (`swoelffel/homebrew-tap`) — `brew install swoelffel/tap/llmshell`. One Ruby formula with `on_macos` + `on_linux` blocks covers macOS *and* Linuxbrew users in one shot. Auto-bumped from `release.yml` via [Justintime50/homebrew-releaser](https://github.com/Justintime50/homebrew-releaser) or a small `sed` step.
 - **AUR `llmsh-bin`** — `yay -S llmsh-bin`. A `PKGBUILD` pointing at the GitHub Release archives. Low effort, strong reach in the Arch / Manjaro / dev-tools community.
 

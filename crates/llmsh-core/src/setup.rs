@@ -442,12 +442,18 @@ mod tests {
         let mut prompts =
             FakePrompts::new("openai", "sk-test", "gpt-4.1-mini", true, profile.clone());
         let mut envs = Vec::new();
+        let previous_openai_key = std::env::var_os("OPENAI_API_KEY");
+        std::env::remove_var("OPENAI_API_KEY");
 
         let outcome =
             run_setup_flow_with_profile(&cfg, &mut prompts, Some(profile.clone()), |k, v| {
                 envs.push((k.to_string(), v.to_string()));
             })
             .unwrap();
+
+        if let Some(value) = previous_openai_key {
+            std::env::set_var("OPENAI_API_KEY", value);
+        }
 
         assert_eq!(outcome.provider, "openai");
         assert_eq!(outcome.model, "gpt-4.1-mini");

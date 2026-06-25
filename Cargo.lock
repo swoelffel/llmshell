@@ -1040,7 +1040,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llmsh-audit"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1056,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-cli"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1117,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1127,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm-anthropic"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1143,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm-mistral"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm-ollama"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-llm-openai"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "llmsh-policy"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "proptest",
  "serde",
@@ -1199,14 +1199,14 @@ dependencies = [
 
 [[package]]
 name = "llmsh-redact"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "llmsh-tools"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
