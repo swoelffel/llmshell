@@ -36,6 +36,7 @@ use llmsh_tools::list_directory::ListDirectory;
 use llmsh_tools::read_file::ReadFile;
 use llmsh_tools::registry::ToolRegistry;
 use llmsh_tools::run_process::RunProcess;
+use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -54,6 +55,12 @@ struct Cli {
     verbose: u8,
     #[command(subcommand)]
     cmd: Option<Cmd>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MissingProviderKey {
+    provider: String,
+    env_var: String,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -119,29 +126,18 @@ async fn main() -> anyhow::Result<()> {
     // 1. Load config
     let cfg_path = user_config_path(cli.config.as_deref())
         .ok_or_else(|| anyhow::anyhow!("could not determine config dir"))?;
-    let (mut cfg, created) = load_or_create_user(&cfg_path)?;
-    if created {
-        println!("No llmsh config found.");
-        println!("Created {}.", cfg_path.display());
-        println!();
-        println!("Set OPENAI_API_KEY to use the default OpenAI-compatible provider,");
-        println!("ANTHROPIC_API_KEY for the Anthropic provider (Claude Haiku/Sonnet/Opus),");
-        println!("or MISTRAL_API_KEY for the Mistral provider:");
-        println!();
-        println!("  export OPENAI_API_KEY=...");
-        println!("  export ANTHROPIC_API_KEY=...");
-        println!("  export MISTRAL_API_KEY=...");
-        println!();
-        println!("Then run: llmsh");
-        return Ok(());
-    }
-    if let Some(m) = cli.model {
-        cfg.default_model = m;
-    }
-
     let workspace_root = std::env::current_dir()?;
-    if let Some(project) = load_project(&workspace_root)? {
-        let _ = merge_project(&mut cfg, &project);
+    let (mut cfg, created) =
+        load_config_with_overrides(&cfg_path, cli.model.as_deref(), &workspace_root)?;
+    if created {
+        println!("No llmsh config found. Created {}.", cfg_path.display());
+        if stdin_is_interactive() && prompt_run_setup_now()? {
+            run_interactive_setup(&cfg_path).await?;
+            cfg = load_config_with_overrides(&cfg_path, cli.model.as_deref(), &workspace_root)?.0;
+        } else {
+            print_manual_setup_instructions();
+            return Ok(());
+        }
     }
 
     let verbose_level: u8 = if cli.verbose > 0 {
@@ -152,7 +148,56 @@ async fn main() -> anyhow::Result<()> {
         cfg.verbose.default_level.min(2)
     };
 
-    // 2. Audit
+    // 2. Provider
+    // Chain: inner concrete provider → SwappableProvider (hot-swap shim) →
+    // ThinkingProvider (status indicator). The SwappableProvider handle is
+    // kept in the REPL so `/provider set …` can replace the inner provider.
+    let (inner, shared_model, provider_prefix) = match build_provider(&cfg) {
+        Ok(provider) => provider,
+        Err(err) => {
+            let recovered = cfg
+                .default_model
+                .split_once(':')
+                .and_then(|(provider_name, _)| {
+                    missing_provider_key_from_error(provider_name, &err)
+                });
+            if let Some(missing) = recovered {
+                if stdin_is_interactive() {
+                    eprintln!(
+                        "Missing {} for provider {}. Run setup now? [Y/n]",
+                        missing.env_var, missing.provider
+                    );
+                    if prompt_yes_no_default_yes()? {
+                        run_interactive_setup(&cfg_path).await?;
+                        cfg = load_config_with_overrides(
+                            &cfg_path,
+                            cli.model.as_deref(),
+                            &workspace_root,
+                        )?
+                        .0;
+                        build_provider(&cfg)?
+                    } else {
+                        return Err(err)
+                            .context("run `llmsh setup` to configure a provider and API key");
+                    }
+                } else {
+                    return Err(err)
+                        .context("run `llmsh setup` to configure a provider and API key");
+                }
+            } else {
+                return Err(err);
+            }
+        }
+    };
+    let swappable = Arc::new(llmsh_core::swappable::SwappableProvider::new(
+        inner,
+        shared_model.clone(),
+    ));
+    let provider: Arc<dyn LlmProvider> = Arc::new(llmsh_core::thinking::ThinkingProvider::new(
+        swappable.clone() as Arc<dyn LlmProvider>,
+    ));
+
+    // 3. Audit
     let no_audit = std::env::var("LLMSH_NO_AUDIT").ok().as_deref() == Some("1");
     if no_audit {
         eprintln!("⚠ LLMSH_NO_AUDIT=1: audit disabled, /history will be empty.");
@@ -174,19 +219,6 @@ async fn main() -> anyhow::Result<()> {
         schema_version: llmsh_audit::event::SCHEMA_VERSION,
         config_effective_hash: cfg.effective_hash(),
     })?;
-
-    // 3. Provider
-    // Chain: inner concrete provider → SwappableProvider (hot-swap shim) →
-    // ThinkingProvider (status indicator). The SwappableProvider handle is
-    // kept in the REPL so `/provider set …` can replace the inner provider.
-    let (inner, shared_model, provider_prefix) = build_provider(&cfg)?;
-    let swappable = Arc::new(llmsh_core::swappable::SwappableProvider::new(
-        inner,
-        shared_model.clone(),
-    ));
-    let provider: Arc<dyn LlmProvider> = Arc::new(llmsh_core::thinking::ThinkingProvider::new(
-        swappable.clone() as Arc<dyn LlmProvider>,
-    ));
 
     // 4. Tools
     let mut registry = ToolRegistry::new();
@@ -492,6 +524,21 @@ async fn validate_setup_choice(
     })
 }
 
+fn load_config_with_overrides(
+    cfg_path: &Path,
+    cli_model: Option<&str>,
+    workspace_root: &Path,
+) -> anyhow::Result<(Config, bool)> {
+    let (mut cfg, created) = load_or_create_user(cfg_path)?;
+    if let Some(model) = cli_model {
+        cfg.default_model = model.to_string();
+    }
+    if let Some(project) = load_project(workspace_root)? {
+        let _ = merge_project(&mut cfg, &project);
+    }
+    Ok((cfg, created))
+}
+
 fn is_network_validation_error(err: &anyhow::Error) -> bool {
     const NETWORK_PATTERNS: &[&str] = &[
         "connection refused",
@@ -509,6 +556,22 @@ fn is_network_validation_error(err: &anyhow::Error) -> bool {
         NETWORK_PATTERNS
             .iter()
             .any(|pattern| message.contains(pattern))
+    })
+}
+
+fn missing_provider_key_from_error(
+    provider: &str,
+    err: &anyhow::Error,
+) -> Option<MissingProviderKey> {
+    let msg = format!("{:#}", err);
+    let prefix = "env var ";
+    let suffix = " not set";
+    let start = msg.find(prefix)? + prefix.len();
+    let rest = &msg[start..];
+    let end = rest.find(suffix)?;
+    Some(MissingProviderKey {
+        provider: provider.to_string(),
+        env_var: rest[..end].to_string(),
     })
 }
 
@@ -688,6 +751,28 @@ fn read_index_selection(label: &str, len: usize) -> anyhow::Result<usize> {
     Ok(selected - 1)
 }
 
+fn stdin_is_interactive() -> bool {
+    std::io::stdin().is_terminal()
+}
+
+fn prompt_run_setup_now() -> anyhow::Result<bool> {
+    println!("Run setup now? [Y/n]");
+    prompt_yes_no_default_yes()
+}
+
+fn prompt_yes_no_default_yes() -> anyhow::Result<bool> {
+    let answer = read_trimmed_line("> ")?;
+    Ok(!matches!(answer.to_ascii_lowercase().as_str(), "n" | "no"))
+}
+
+fn print_manual_setup_instructions() {
+    println!();
+    println!("Set one provider API key, then run `llmsh setup` or `llmsh` again:");
+    println!("  export OPENAI_API_KEY=...");
+    println!("  export ANTHROPIC_API_KEY=...");
+    println!("  export MISTRAL_API_KEY=...");
+}
+
 fn confirm_finish_anyway() -> anyhow::Result<bool> {
     println!("Finish setup anyway? [y/N]");
     let answer = read_trimmed_line("> ")?;
@@ -817,6 +902,14 @@ mod tests {
                 "expected fatal classification for: {fatal_message}"
             );
         }
+    }
+
+    #[test]
+    fn detects_missing_provider_key_error() {
+        let err = anyhow::anyhow!("env var OPENAI_API_KEY not set");
+        let missing = missing_provider_key_from_error("openai", &err).unwrap();
+        assert_eq!(missing.provider, "openai");
+        assert_eq!(missing.env_var, "OPENAI_API_KEY");
     }
 
     #[tokio::test]
