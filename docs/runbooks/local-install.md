@@ -88,4 +88,5 @@ If a step fails, **do not** declare the deploy complete. Re-run from §1 or §2 
 | `llmsh --version` reports the old version | `cargo install` not run / binary copied to a path not on `$PATH` | re-run §1; verify `which llmsh` |
 | `/provider` does not list the new provider | User config predates the release; defaults not merged into existing file | §2 — append the missing block |
 | `env var ANTHROPIC_API_KEY not set` | API key not exported in current shell | `export ANTHROPIC_API_KEY=…` in the shell that launches `llmsh` |
+| `env var MISTRAL_API_KEY not set` | API key not exported in current shell | `export MISTRAL_API_KEY=…` in the shell that launches `llmsh` |
 | `unknown provider "X"; supported: …` | Binary is older than the config; `cargo install` was skipped | re-run §1 |

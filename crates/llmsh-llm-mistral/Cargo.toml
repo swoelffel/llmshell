@@ -1,0 +1,28 @@
+[package]
+name = "llmsh-llm-mistral"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "LLMShell Mistral Chat Completion provider implementation."
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+llmsh-llm = { path = "../llmsh-llm" }
+secrecy = "0.8"
+llmsh-redact = { path = "../llmsh-redact" }
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { workspace = true }

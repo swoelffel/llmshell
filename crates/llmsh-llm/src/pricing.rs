@@ -1,6 +1,7 @@
 //! Per-model price table ($ per 1M tokens). May 2026 OpenAI + Anthropic lineups.
 //! Source values: provider public pricing pages (OpenAI verified for v0.2.2;
-//! Anthropic Claude 4.x added for v0.3.0).
+//! Anthropic Claude 4.x added for v0.3.0; Mistral public model cards added
+//! for v0.3.1).
 //! Returns `None` for unknown models so the UI can render `?` rather than a
 //! misleading 0.
 
@@ -103,6 +104,18 @@ pub fn pricing_for(model: &str) -> Option<ModelPricing> {
             cached_input_per_million: 1.50,
             output_per_million: 75.00,
         },
+        // Mistral model cards. Mistral prompt caching is not modeled here, so
+        // cached input is priced the same as regular input.
+        "mistral-medium-3-5" => ModelPricing {
+            input_per_million: 1.50,
+            cached_input_per_million: 1.50,
+            output_per_million: 7.50,
+        },
+        "mistral-small-2603" => ModelPricing {
+            input_per_million: 0.15,
+            cached_input_per_million: 0.15,
+            output_per_million: 0.60,
+        },
         _ => return None,
     })
 }
@@ -135,6 +148,17 @@ mod tests {
         assert_eq!(o.output_per_million, 75.00);
 
         assert!(pricing_for("claude-sonnet-4-6").is_some());
+    }
+
+    #[test]
+    fn mistral_pricing_lookup() {
+        let medium = pricing_for("mistral:mistral-medium-3-5").unwrap();
+        assert_eq!(medium.input_per_million, 1.50);
+        assert_eq!(medium.output_per_million, 7.50);
+
+        let small = pricing_for("mistral-small-2603").unwrap();
+        assert_eq!(small.input_per_million, 0.15);
+        assert_eq!(small.output_per_million, 0.60);
     }
 
     #[test]

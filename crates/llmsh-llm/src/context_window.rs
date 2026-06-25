@@ -20,6 +20,9 @@ pub fn context_window_for(model: &str) -> u32 {
         128_000
     } else if m.starts_with("claude-") {
         200_000
+    } else if m.starts_with("mistral-") || m.starts_with("devstral-") || m.starts_with("codestral-")
+    {
+        256_000
     } else {
         8_192
     }
@@ -48,6 +51,13 @@ mod tests {
         assert_eq!(context_window_for("claude-sonnet-4-6"), 200_000);
         assert_eq!(context_window_for("claude-opus-4-7"), 200_000);
         assert_eq!(context_window_for("anthropic:claude-haiku-4-5"), 200_000);
+    }
+
+    #[test]
+    fn mistral_family_mapped() {
+        assert_eq!(context_window_for("mistral-medium-3-5"), 256_000);
+        assert_eq!(context_window_for("mistral:mistral-small-2603"), 256_000);
+        assert_eq!(context_window_for("devstral-2512"), 256_000);
     }
 
     #[test]

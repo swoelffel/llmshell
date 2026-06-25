@@ -15,11 +15,11 @@ LLMShell (`llmsh`) lets you describe terminal tasks in natural language. The age
 
 ```bash
 cargo install --git https://github.com/swoelffel/llmshell --locked
-export OPENAI_API_KEY=sk-...          # or ANTHROPIC_API_KEY=sk-ant-... for Claude
+export OPENAI_API_KEY=sk-...          # or ANTHROPIC_API_KEY / MISTRAL_API_KEY
 llmsh
 ```
 
-Three providers are supported out of the box: OpenAI-compatible APIs, Anthropic (Claude Haiku / Sonnet / Opus), and Ollama for local models. Switch at runtime with `/provider set anthropic` or `/model use claude-sonnet-4-6`.
+Four providers are supported out of the box: OpenAI-compatible APIs, Anthropic (Claude Haiku / Sonnet / Opus), Mistral, and Ollama for local models. Switch at runtime with `/provider set mistral` or `/model use mistral:mistral-small-2603`.
 
 On first launch, `llmsh` writes a default user config (`~/.config/llmsh/config.toml` on Linux, `~/Library/Application Support/llmsh/config.toml` on macOS, `%APPDATA%\llmsh\config.toml` on Windows). A project-level `.llmsh.toml` in the current directory merges on top. See [docs/configuration.md](docs/configuration.md).
 
@@ -80,12 +80,13 @@ Full details: [docs/safety.md](docs/safety.md).
 
 ## Architecture
 
-Eight Rust crates:
+Eleven Rust crates:
 
 - `llmsh-llm` — provider-neutral `LlmProvider` trait + neutral message/tool-call types.
 - `llmsh-llm-openai` — OpenAI-compatible HTTP provider.
 - `llmsh-llm-anthropic` — Anthropic Messages API provider (Claude Haiku / Sonnet / Opus).
 - `llmsh-llm-ollama` — local Ollama provider.
+- `llmsh-llm-mistral` — Mistral Chat Completion API provider.
 - `llmsh-policy` — `RiskAction` (`Allow` / `Confirm` / `ConfirmStrong` / `Deny`) classifier.
 - `llmsh-tools` — `read_file`, `list_directory`, `run_process`, `glob` behind a `Tool` trait.
 - `llmsh-audit` — append-only JSONL with hash-chained `digest`, redaction, event taxonomy.
@@ -141,6 +142,7 @@ Useful environment variables:
 
 - `OPENAI_API_KEY` — required for the OpenAI provider.
 - `ANTHROPIC_API_KEY` — required for the Anthropic provider (Claude).
+- `MISTRAL_API_KEY` — required for the Mistral provider.
 - `LLMSH_MODEL` — override default model for a session.
 - `LLMSH_CONFIG` — alternative config path.
 - `LLMSH_DEBUG=1` — tracing on stderr.
@@ -154,7 +156,7 @@ LLMShell is **early-stage experimental software**. Do not use it on production s
 
 Current capabilities:
 
-- providers: OpenAI-compatible, Anthropic (Claude 4.x), Ollama — with runtime model switch (`/model`) and provider switch (`/provider set <name>`),
+- providers: OpenAI-compatible, Anthropic (Claude 4.x), Mistral, Ollama — with runtime model switch (`/model`) and provider switch (`/provider set <name>`),
 - natural-language REPL with slash commands,
 - typed tools: `list_directory`, `read_file`, `run_process`, `glob`,
 - policy engine with sensitive-path protection,

@@ -50,6 +50,14 @@ tool_calling = "native"
 # Haiku is the default for the Anthropic provider.
 models = ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"]
 
+[providers.mistral]
+# Mistral Chat Completion API.
+api_key_env = "MISTRAL_API_KEY"
+base_url = "https://api.mistral.ai/v1"
+tool_calling = "native"
+# `models[0]` is the model selected when running `/provider set mistral`.
+models = ["mistral-medium-3-5", "mistral-small-2603", "mistral-large-2512", "devstral-2512", "codestral-2508"]
+
 [policy]
 # Per-risk-level default action: "allow" | "confirm" | "confirm_strong" | "deny".
 read_only = "allow"
@@ -112,6 +120,7 @@ The merge is a per-key shallow merge: project keys override user keys; user keys
 |---|---|
 | `OPENAI_API_KEY` | Required for the OpenAI-compatible provider. |
 | `ANTHROPIC_API_KEY` | Required for the Anthropic provider (Claude Haiku/Sonnet/Opus). |
+| `MISTRAL_API_KEY` | Required for the Mistral provider. |
 | `LLMSH_MODEL` | Override `default_model` for the current session. |
 | `LLMSH_CONFIG` | Use a non-default user config path. |
 | `LLMSH_DEBUG=1` | Enable tracing on stderr. |

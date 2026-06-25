@@ -265,6 +265,21 @@ impl Config {
                 ],
             },
         );
+        providers.insert(
+            "mistral".into(),
+            ProviderConfig {
+                api_key_env: Some("MISTRAL_API_KEY".into()),
+                base_url: "https://api.mistral.ai/v1".into(),
+                tool_calling: "native".into(),
+                models: vec![
+                    "mistral-medium-3-5".into(),
+                    "mistral-small-2603".into(),
+                    "mistral-large-2512".into(),
+                    "devstral-2512".into(),
+                    "codestral-2508".into(),
+                ],
+            },
+        );
         Self {
             default_model: "openai:gpt-4.1-mini".into(),
             providers,
@@ -346,5 +361,23 @@ impl Config {
     pub fn effective_hash(&self) -> String {
         let s = serde_json::to_string(&self).unwrap();
         llmsh_audit::digest::sha256_hex(s.as_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_include_mistral_provider() {
+        let cfg = Config::defaults();
+        let mistral = cfg
+            .providers
+            .get("mistral")
+            .expect("mistral provider should be configured by default");
+        assert_eq!(mistral.api_key_env.as_deref(), Some("MISTRAL_API_KEY"));
+        assert_eq!(mistral.base_url, "https://api.mistral.ai/v1");
+        assert!(mistral.models.contains(&"mistral-medium-3-5".into()));
+        assert!(mistral.models.contains(&"mistral-small-2603".into()));
     }
 }

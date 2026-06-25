@@ -22,6 +22,7 @@ use llmsh_llm::provider::LlmProvider;
 use llmsh_llm_anthropic::provider::{
     AnthropicConfig, AnthropicProvider, DEFAULT_MAX_TOKENS as ANTHROPIC_DEFAULT_MAX_TOKENS,
 };
+use llmsh_llm_mistral::provider::{MistralConfig, MistralProvider};
 use llmsh_llm_ollama::provider::{OllamaConfig, OllamaProvider};
 use llmsh_llm_openai::provider::{OpenAIConfig, OpenAIProvider};
 use llmsh_policy::context::PolicyContext;
@@ -110,10 +111,12 @@ async fn main() -> anyhow::Result<()> {
         println!("Created {}.", cfg_path.display());
         println!();
         println!("Set OPENAI_API_KEY to use the default OpenAI-compatible provider,");
-        println!("or ANTHROPIC_API_KEY for the Anthropic provider (Claude Haiku/Sonnet/Opus):");
+        println!("ANTHROPIC_API_KEY for the Anthropic provider (Claude Haiku/Sonnet/Opus),");
+        println!("or MISTRAL_API_KEY for the Mistral provider:");
         println!();
         println!("  export OPENAI_API_KEY=...");
         println!("  export ANTHROPIC_API_KEY=...");
+        println!("  export MISTRAL_API_KEY=...");
         println!();
         println!("Then run: llmsh");
         return Ok(());
@@ -418,8 +421,23 @@ fn build_inner_provider(
             })?;
             Ok(Arc::new(p))
         }
+        "mistral" => {
+            let env_var = pcfg
+                .api_key_env
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("mistral provider requires api_key_env"))?;
+            let api_key = std::env::var(env_var)
+                .map_err(|_| anyhow::anyhow!("env var {} not set", env_var))?;
+            let p = MistralProvider::new(MistralConfig {
+                base_url: pcfg.base_url.clone(),
+                api_key,
+                model: model.into(),
+                timeout_ms: 60_000,
+            })?;
+            Ok(Arc::new(p))
+        }
         other => anyhow::bail!(
-            "unknown provider \"{}\"; supported: openai, anthropic, ollama",
+            "unknown provider \"{}\"; supported: openai, anthropic, ollama, mistral",
             other
         ),
     }
@@ -498,5 +516,26 @@ mod tests {
     fn explicit_env_used_verbatim() {
         let p = memory_path_from_env_or_default(Some("/tmp/custom.db".into())).unwrap();
         assert_eq!(p, PathBuf::from("/tmp/custom.db"));
+    }
+
+    #[test]
+    fn build_inner_provider_supports_mistral() {
+        std::env::set_var(
+            "MISTRAL_API_KEY",
+            "mistral-api-key-EXAMPLE_FIXTURE_NOT_REAL",
+        );
+        let mut cfg = Config::defaults();
+        cfg.providers.insert(
+            "mistral".into(),
+            llmsh_core::config::ProviderConfig {
+                api_key_env: Some("MISTRAL_API_KEY".into()),
+                base_url: "https://api.mistral.ai/v1".into(),
+                tool_calling: "native".into(),
+                models: vec!["mistral-medium-3-5".into()],
+            },
+        );
+        let provider = build_inner_provider("mistral", "mistral-medium-3-5", &cfg)
+            .expect("mistral provider should build");
+        assert_eq!(provider.current_model(), "mistral-medium-3-5");
     }
 }

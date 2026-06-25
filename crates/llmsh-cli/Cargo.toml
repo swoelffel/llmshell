@@ -31,6 +31,7 @@ llmsh-llm = { path = "../llmsh-llm" }
 llmsh-llm-openai = { path = "../llmsh-llm-openai" }
 llmsh-llm-anthropic = { path = "../llmsh-llm-anthropic" }
 llmsh-llm-ollama = { path = "../llmsh-llm-ollama" }
+llmsh-llm-mistral = { path = "../llmsh-llm-mistral" }
 llmsh-policy = { path = "../llmsh-policy" }
 llmsh-tools = { path = "../llmsh-tools" }
 reedline = { workspace = true }

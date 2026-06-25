@@ -5,6 +5,7 @@ members = [
     "crates/llmsh-llm-openai",
     "crates/llmsh-llm-anthropic",
     "crates/llmsh-llm-ollama",
+    "crates/llmsh-llm-mistral",
     "crates/llmsh-policy",
     "crates/llmsh-redact",
     "crates/llmsh-audit",
@@ -18,7 +19,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.78"
 license = "MIT"

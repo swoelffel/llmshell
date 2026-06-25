@@ -2,6 +2,26 @@
 
 All notable changes to LLMShell are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches v1.0.
 
+## [0.3.2] — 2026-06-25
+
+### Added
+
+- **Mistral provider** (`llmsh-llm-mistral`) — native Chat Completion API
+  implementation with tool calls, JSON-object response format, model listing,
+  runtime model switching, and HTTP error redaction.
+  - Configured via `[providers.mistral]` + `MISTRAL_API_KEY`.
+  - Switch at runtime with `/provider set mistral`; the provider's first
+    configured model is `mistral-medium-3-5`.
+  - Default allowlist includes `mistral-medium-3-5`, `mistral-small-2603`,
+    `mistral-large-2512`, `devstral-2512`, and `codestral-2508`.
+- Pricing + context-window entries for the main Mistral model families used by
+  the default configuration.
+
+### Documentation
+
+- README and configuration reference now document Mistral setup, the
+  `MISTRAL_API_KEY` environment variable, and the new provider crate.
+
 ## [0.3.1] — 2026-05-13
 
 ### Policy — quoting-aware shell lexer
@@ -174,7 +194,13 @@ Initial slice. Establishes the crate split and the core pipeline:
 - Confirmation gate trait with `AlwaysYesGate` / `AlwaysNoGate` test impls.
 - Per-tool timeout and `CancellationToken` in the executor.
 
-[Unreleased]: https://github.com/swoelffel/llmshell/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/swoelffel/llmshell/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/swoelffel/llmshell/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/swoelffel/llmshell/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/swoelffel/llmshell/compare/v0.2.15...v0.3.0
+[0.2.15]: https://github.com/swoelffel/llmshell/compare/v0.2.14...v0.2.15
+[0.2.14]: https://github.com/swoelffel/llmshell/compare/v0.2.13...v0.2.14
+[0.2.13]: https://github.com/swoelffel/llmshell/compare/v0.2.1...v0.2.13
 [0.2.1]: https://github.com/swoelffel/llmshell/releases/tag/v0.2.1
 [0.2.0-context-memory]: https://github.com/swoelffel/llmshell/releases/tag/v0.2.0-context-memory
 [0.1.0-slice]: https://github.com/swoelffel/llmshell/releases/tag/v0.1.0-slice
