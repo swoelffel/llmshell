@@ -8,6 +8,8 @@ For normal macOS/Linux users, prefer the release installer:
 curl -fsSL https://raw.githubusercontent.com/swoelffel/llmshell/main/install.sh | sh
 ```
 
+The release installer defaults to `~/.local/bin`. If that directory is not already on your `PATH`, the installer prints the exact export command to add it and still runs `setup` through the absolute installed binary when a terminal is available.
+
 The rest of this runbook is for developer rebuilds from a checked-out workspace.
 
 Use this every time you need the freshly built `llmsh` binary on the developer machine (typically after a feature branch, a release bump, or a config-shape change). It replaces ad-hoc `cp` flows which break on macOS Sequoia (provenance xattr → `zsh: killed`).

@@ -255,6 +255,45 @@ test_setup_mode_without_terminal() {
   pass "setup_mode skips without terminal"
 }
 
+test_path_contains_dir_matches_exact_entry() {
+  PATH="/usr/bin:/tmp/llmsh/bin:/bin"
+  path_contains_dir "/tmp/llmsh/bin" || fail "path_contains_dir should match exact PATH entry"
+  if path_contains_dir "/tmp/llmsh"; then
+    fail "path_contains_dir should not match partial PATH entry"
+  fi
+  pass "path_contains_dir matches exact entry"
+}
+
+test_print_path_guidance_when_missing_after_setup() {
+  tmp="$(new_tmpdir)"
+  install_dir="$tmp/bin"
+  dest="$install_dir/llmsh"
+  stdout_log="$tmp/stdout.log"
+  stderr_log="$tmp/stderr.log"
+
+  PATH="/usr/bin:/bin" print_path_guidance "$install_dir" "$dest" "stdin" >"$stdout_log" 2>"$stderr_log"
+
+  [ ! -s "$stdout_log" ] || fail "print_path_guidance should not write to stdout"
+  grep -q 'not on your PATH' "$stderr_log" || fail "print_path_guidance should explain PATH gap"
+  grep -q "export PATH=\"$install_dir:\$PATH\"" "$stderr_log" || fail "print_path_guidance should print exact export command"
+  grep -q "Setup already ran via '$dest setup'" "$stderr_log" || fail "print_path_guidance should mention absolute-path setup"
+  pass "print_path_guidance reports missing PATH after setup"
+}
+
+test_print_path_guidance_is_silent_when_present() {
+  tmp="$(new_tmpdir)"
+  install_dir="$tmp/bin"
+  dest="$install_dir/llmsh"
+  stdout_log="$tmp/stdout.log"
+  stderr_log="$tmp/stderr.log"
+
+  PATH="$install_dir:/usr/bin:/bin" print_path_guidance "$install_dir" "$dest" "stdin" >"$stdout_log" 2>"$stderr_log"
+
+  [ ! -s "$stdout_log" ] || fail "print_path_guidance should stay silent on stdout when PATH already contains install dir"
+  [ ! -s "$stderr_log" ] || fail "print_path_guidance should stay silent when PATH already contains install dir"
+  pass "print_path_guidance is silent when PATH already contains install dir"
+}
+
 test_main_installs_and_runs_setup() {
   tmp="$(new_tmpdir)"
   install_dir="$tmp/install"
@@ -429,6 +468,41 @@ test_main_skips_setup_without_terminal() {
   pass "main skips setup without terminal"
 }
 
+test_main_reports_path_guidance_after_successful_setup() {
+  tmp="$(new_tmpdir)"
+  install_dir="$tmp/install"
+  log="$tmp/run.log"
+  archive_root="$tmp/archive-root"
+  version="v2.2.0"
+  target="x86_64-unknown-linux-gnu"
+  make_release_archive "$archive_root" "$version" "$target" "$log" "$tmp/archive.tar.gz"
+
+  latest_version() { printf '%s\n' "$version"; }
+  detect_target() { printf '%s\n' "$target"; }
+  stdin_is_interactive() { return 0; }
+  download() {
+    case "$1" in
+      */SHA256SUMS) printf 'unused  archive.tar.gz\n' > "$2" ;;
+      *) cp "$tmp/archive.tar.gz" "$2" ;;
+    esac
+  }
+  checksum_verify() { :; }
+
+  if ! (
+    LLMSH_INSTALL_DIR="$install_dir"
+    PATH="/usr/bin:/bin"
+    main
+  ) >"$tmp/stdout.log" 2>"$tmp/stderr.log"; then
+    fail "main should succeed when install dir is not on PATH"
+  fi
+
+  grep -qx -- '--version' "$log" || fail "main should run --version before PATH guidance"
+  grep -qx -- 'setup' "$log" || fail "main should run setup before PATH guidance"
+  grep -q "export PATH=\"$install_dir:\$PATH\"" "$tmp/stderr.log" || fail "main should print PATH export guidance"
+  grep -q "Setup already ran via '$install_dir/llmsh setup'" "$tmp/stderr.log" || fail "main should mention absolute-path setup after PATH guidance"
+  pass "main reports PATH guidance after setup"
+}
+
 test_artifact_name
 test_detect_target_linux
 test_detect_target_darwin
@@ -443,8 +517,12 @@ test_setup_mode_interactive_stdin
 test_setup_mode_tty_fallback
 test_setup_mode_skip_env
 test_setup_mode_without_terminal
+test_path_contains_dir_matches_exact_entry
+test_print_path_guidance_when_missing_after_setup
+test_print_path_guidance_is_silent_when_present
 test_main_installs_and_runs_setup
 test_main_runs_setup_via_tty_fallback
 test_main_skips_setup_when_requested
 test_main_fails_when_archive_layout_is_wrong
 test_main_skips_setup_without_terminal
+test_main_reports_path_guidance_after_successful_setup

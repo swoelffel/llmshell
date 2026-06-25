@@ -174,6 +174,37 @@ run_setup() {
   esac
 }
 
+path_contains_dir() {
+  dir="$1"
+  case ":${PATH:-}:" in
+    *":$dir:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+print_path_guidance() {
+  install_dir="$1"
+  dest="$2"
+  mode="$3"
+
+  if path_contains_dir "$install_dir"; then
+    return 0
+  fi
+
+  printf '%s\n' "llmsh installer: $install_dir is not on your PATH." >&2
+  printf '%s\n' "Add it in your shell before running 'llmsh' by name:" >&2
+  printf '  export PATH="%s:$PATH"\n' "$install_dir" >&2
+
+  case "$mode" in
+    stdin|tty)
+      printf '%s\n' "Setup already ran via '$dest setup'." >&2
+      ;;
+    *)
+      :
+      ;;
+  esac
+}
+
 main() {
   repo="${LLMSH_REPO:-swoelffel/llmshell}"
   version="${LLMSH_VERSION:-$(latest_version "$repo")}"
@@ -212,7 +243,26 @@ main() {
   install_binary "$src" "$dest"
   "$dest" --version
 
-  run_setup "$dest"
+  mode="$(setup_mode)"
+  case "$mode" in
+    skip)
+      ;;
+    stdin)
+      "$dest" setup
+      ;;
+    tty)
+      tty="$(tty_device)"
+      "$dest" setup < "$tty" > "$tty"
+      ;;
+    none)
+      printf '%s\n' "llmsh installer: no interactive terminal detected; skipping setup. Run 'llmsh setup' or 'llmsh' later from a terminal." >&2
+      ;;
+    *)
+      fail "unexpected setup mode"
+      ;;
+  esac
+
+  print_path_guidance "$dest_dir" "$dest" "$mode"
 }
 
 if [ "${LLMSH_INSTALL_TESTING:-0}" != "1" ]; then
