@@ -18,6 +18,7 @@ use llmsh_core::model_cmd::ModelListCache;
 use llmsh_core::pipeline::Pipeline;
 use llmsh_core::raw_shell::RiskScan;
 use llmsh_core::repl::{Repl, ReplState};
+use llmsh_core::setup::{run_setup_flow, SetupPrompts, SetupProvider};
 use llmsh_llm::provider::LlmProvider;
 use llmsh_llm_anthropic::provider::{
     AnthropicConfig, AnthropicProvider, DEFAULT_MAX_TOKENS as ANTHROPIC_DEFAULT_MAX_TOKENS,
@@ -32,7 +33,7 @@ use llmsh_tools::list_directory::ListDirectory;
 use llmsh_tools::read_file::ReadFile;
 use llmsh_tools::registry::ToolRegistry;
 use llmsh_tools::run_process::RunProcess;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 type ProviderWithModel = (Arc<dyn LlmProvider>, Arc<RwLock<String>>, Option<String>);
@@ -54,6 +55,8 @@ struct Cli {
 
 #[derive(clap::Subcommand, Debug)]
 enum Cmd {
+    /// Run first-time provider/API key/model setup.
+    Setup,
     /// Verify the hash chain of an audit log.
     VerifyAudit {
         /// Path to the .jsonl audit file.
@@ -74,32 +77,40 @@ async fn main() -> anyhow::Result<()> {
     }
     let cli = Cli::parse();
 
-    if let Some(Cmd::VerifyAudit { path, session_id }) = cli.cmd {
-        let sid = session_id.unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string()
-        });
-        let jsonl =
-            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        match llmsh_audit::verify_chain(&jsonl, &sid) {
-            Ok(v) if v.sealed => {
-                println!("OK: {} events, sealed (session_ended present).", v.events);
-                return Ok(());
-            }
-            Ok(v) => {
-                println!(
-                    "OK (unsealed): {} events, no session_ended — file is internally consistent but may have been truncated or the writer crashed.",
-                    v.events
-                );
-                return Ok(());
-            }
-            Err(e) => {
-                eprintln!("FAIL: {e}");
-                std::process::exit(2);
+    match cli.cmd {
+        Some(Cmd::Setup) => {
+            let cfg_path = user_config_path(cli.config.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("could not determine config dir"))?;
+            return run_interactive_setup(&cfg_path).await;
+        }
+        Some(Cmd::VerifyAudit { path, session_id }) => {
+            let sid = session_id.unwrap_or_else(|| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string()
+            });
+            let jsonl = std::fs::read_to_string(&path)
+                .with_context(|| format!("read {}", path.display()))?;
+            match llmsh_audit::verify_chain(&jsonl, &sid) {
+                Ok(v) if v.sealed => {
+                    println!("OK: {} events, sealed (session_ended present).", v.events);
+                    return Ok(());
+                }
+                Ok(v) => {
+                    println!(
+                        "OK (unsealed): {} events, no session_ended — file is internally consistent but may have been truncated or the writer crashed.",
+                        v.events
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    eprintln!("FAIL: {e}");
+                    std::process::exit(2);
+                }
             }
         }
+        None => {}
     }
 
     // 1. Load config
@@ -358,6 +369,87 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+struct StdinSetupPrompts;
+
+impl SetupPrompts for StdinSetupPrompts {
+    fn choose_provider(&mut self, providers: &[SetupProvider]) -> anyhow::Result<Option<String>> {
+        println!("Select a provider:");
+        for (idx, provider) in providers.iter().enumerate() {
+            println!("  {}. {}", idx + 1, provider.display_name);
+        }
+        read_index_selection("Provider", providers.len())
+            .map(|idx| Some(providers[idx].name.clone()))
+    }
+
+    fn read_api_key(&mut self, provider: &SetupProvider) -> anyhow::Result<Option<String>> {
+        let env_var = provider.api_key_env.as_deref().unwrap_or("API_KEY");
+        println!("Enter {env_var} for {}:", provider.display_name);
+        let value = read_trimmed_line("> ")?;
+        if value.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(value))
+    }
+
+    fn choose_model(
+        &mut self,
+        provider: &str,
+        models: &[String],
+    ) -> anyhow::Result<Option<String>> {
+        println!("Select a model for {provider}:");
+        for (idx, model) in models.iter().enumerate() {
+            println!("  {}. {}", idx + 1, model);
+        }
+        read_index_selection("Model", models.len()).map(|idx| Some(models[idx].clone()))
+    }
+
+    fn confirm_persist_env(&mut self, profile: &Path, env_var: &str) -> anyhow::Result<bool> {
+        println!(
+            "Append {} to {} so future shells inherit it? [Y/n]",
+            env_var,
+            profile.display()
+        );
+        let answer = read_trimmed_line("> ")?;
+        Ok(!matches!(answer.to_ascii_lowercase().as_str(), "n" | "no"))
+    }
+}
+
+async fn run_interactive_setup(config_path: &Path) -> anyhow::Result<()> {
+    let mut prompts = StdinSetupPrompts;
+    let outcome = run_setup_flow(config_path, &mut prompts, |key, value| {
+        std::env::set_var(key, value);
+    })?;
+
+    let (cfg, _) = load_or_create_user(config_path)?;
+    match build_inner_provider(&outcome.provider, &outcome.model, &cfg) {
+        Ok(provider) => {
+            if let Err(err) = provider.list_models().await {
+                eprintln!("Provider validation failed: {err}");
+                if !confirm_finish_anyway()? {
+                    anyhow::bail!("setup aborted after provider validation failure");
+                }
+            }
+        }
+        Err(err) => {
+            eprintln!("Provider validation failed: {err}");
+            if !confirm_finish_anyway()? {
+                anyhow::bail!("setup aborted after provider validation failure");
+            }
+        }
+    }
+
+    println!(
+        "Saved default model {}:{} in {}.",
+        outcome.provider,
+        outcome.model,
+        config_path.display()
+    );
+    if let Some(profile) = outcome.profile_updated {
+        println!("Updated {}.", profile.display());
+    }
+    Ok(())
+}
+
 fn build_provider(cfg: &Config) -> anyhow::Result<ProviderWithModel> {
     let (provider_name, model) = cfg
         .default_model
@@ -495,9 +587,45 @@ fn memory_path_from_env_or_default(env_value: Option<String>) -> anyhow::Result<
         .ok_or_else(|| anyhow::anyhow!("could not determine data dir for memory.db"))
 }
 
+fn read_trimmed_line(prompt: &str) -> anyhow::Result<String> {
+    use std::io::Write as _;
+
+    print!("{prompt}");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim().to_string())
+}
+
+fn read_index_selection(label: &str, len: usize) -> anyhow::Result<usize> {
+    let prompt = format!("{label} [1]: ");
+    let input = read_trimmed_line(&prompt)?;
+    if input.is_empty() {
+        return Ok(0);
+    }
+    let selected: usize = input.parse()?;
+    if !(1..=len).contains(&selected) {
+        anyhow::bail!("{label} selection must be between 1 and {len}");
+    }
+    Ok(selected - 1)
+}
+
+fn confirm_finish_anyway() -> anyhow::Result<bool> {
+    println!("Finish setup anyway? [y/N]");
+    let answer = read_trimmed_line("> ")?;
+    Ok(matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_setup_subcommand() {
+        let cli = Cli::try_parse_from(["llmsh", "setup"]).unwrap();
+        assert!(matches!(cli.cmd, Some(Cmd::Setup)));
+    }
 
     #[test]
     fn empty_env_falls_back_to_default() {

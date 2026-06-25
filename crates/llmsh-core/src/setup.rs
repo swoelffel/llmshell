@@ -18,6 +18,106 @@ pub struct SetupProvider {
     pub api_key_env: Option<String>,
 }
 
+pub trait SetupPrompts {
+    fn choose_provider(&mut self, providers: &[SetupProvider]) -> Result<Option<String>>;
+    fn read_api_key(&mut self, provider: &SetupProvider) -> Result<Option<String>>;
+    fn choose_model(&mut self, provider: &str, models: &[String]) -> Result<Option<String>>;
+    fn confirm_persist_env(&mut self, profile: &Path, env_var: &str) -> Result<bool>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupOutcome {
+    pub provider: String,
+    pub model: String,
+    pub env_var: Option<String>,
+    pub profile_updated: Option<PathBuf>,
+}
+
+pub fn run_setup_flow(
+    config_path: &Path,
+    prompts: &mut impl SetupPrompts,
+    env_setter: impl FnMut(&str, &str),
+) -> Result<SetupOutcome> {
+    let profile = detected_profile_from_env();
+    run_setup_flow_with_profile(config_path, prompts, profile, env_setter)
+}
+
+fn detected_profile_from_env() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    detect_shell_profile(&home, std::env::var("SHELL").ok().as_deref())
+}
+
+fn run_setup_flow_with_profile(
+    config_path: &Path,
+    prompts: &mut impl SetupPrompts,
+    profile: Option<PathBuf>,
+    mut env_setter: impl FnMut(&str, &str),
+) -> Result<SetupOutcome> {
+    let (cfg, _) = crate::config::load::load_or_create_user(config_path)?;
+    let providers = available_providers(&cfg);
+    if providers.is_empty() {
+        return Err(anyhow!("no providers configured"));
+    }
+    let provider_name = prompts
+        .choose_provider(&providers)?
+        .ok_or_else(|| anyhow!("setup canceled before provider selection"))?;
+    let provider = providers
+        .iter()
+        .find(|candidate| candidate.name == provider_name)
+        .ok_or_else(|| anyhow!("unknown provider: {provider_name}"))?;
+
+    let mut profile_updated = None;
+    if let Some(env_var) = provider.api_key_env.as_deref() {
+        if std::env::var(env_var).is_err() {
+            let api_key = prompts
+                .read_api_key(provider)?
+                .ok_or_else(|| anyhow!("setup canceled before API key entry"))?;
+            env_setter(env_var, &api_key);
+            if let Some(profile_path) = profile.as_ref() {
+                if prompts.confirm_persist_env(profile_path, env_var)? {
+                    upsert_managed_env_block(profile_path, env_var, &api_key)?;
+                    profile_updated = Some(profile_path.clone());
+                }
+            }
+        }
+    }
+
+    let models = cfg
+        .providers
+        .get(&provider_name)
+        .ok_or_else(|| anyhow!("provider {provider_name} not configured"))?
+        .models
+        .clone();
+    if models.is_empty() {
+        return Err(anyhow!("{provider_name} has no configured models"));
+    }
+    let model = match prompts.choose_model(&provider_name, &models)? {
+        Some(selected) => {
+            if !models.iter().any(|candidate| candidate == &selected) {
+                return Err(anyhow!(
+                    "unknown model {selected} for provider {provider_name}"
+                ));
+            }
+            selected
+        }
+        None => models[0].clone(),
+    };
+
+    crate::config::persist::set_default_model_and_provider(
+        config_path,
+        &crate::config::Config::defaults(),
+        &provider_name,
+        &model,
+    )?;
+
+    Ok(SetupOutcome {
+        provider: provider_name,
+        model,
+        env_var: provider.api_key_env.clone(),
+        profile_updated,
+    })
+}
+
 pub fn available_providers(cfg: &Config) -> Vec<SetupProvider> {
     let mut providers: Vec<_> = cfg
         .providers
@@ -148,6 +248,52 @@ pub fn upsert_managed_env_block(profile: &Path, env_var: &str, value: &str) -> R
 mod tests {
     use super::*;
 
+    struct FakePrompts {
+        provider: Option<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+        persist_env: bool,
+        profile: std::path::PathBuf,
+    }
+
+    impl FakePrompts {
+        fn new(
+            provider: &str,
+            api_key: &str,
+            model: &str,
+            persist_env: bool,
+            profile: std::path::PathBuf,
+        ) -> Self {
+            Self {
+                provider: Some(provider.to_string()),
+                api_key: Some(api_key.to_string()),
+                model: Some(model.to_string()),
+                persist_env,
+                profile,
+            }
+        }
+    }
+
+    impl SetupPrompts for FakePrompts {
+        fn choose_provider(&mut self, _providers: &[SetupProvider]) -> Result<Option<String>> {
+            Ok(self.provider.take())
+        }
+
+        fn read_api_key(&mut self, _provider: &SetupProvider) -> Result<Option<String>> {
+            Ok(self.api_key.take())
+        }
+
+        fn choose_model(&mut self, _provider: &str, _models: &[String]) -> Result<Option<String>> {
+            Ok(self.model.take())
+        }
+
+        fn confirm_persist_env(&mut self, profile: &Path, env_var: &str) -> Result<bool> {
+            assert_eq!(profile, self.profile.as_path());
+            assert_eq!(env_var, "OPENAI_API_KEY");
+            Ok(self.persist_env)
+        }
+    }
+
     #[test]
     fn available_providers_are_stable_and_sorted() {
         let cfg = crate::config::Config::defaults();
@@ -244,5 +390,34 @@ mod tests {
         assert!(result.contains("set -gx PATH $HOME/bin $PATH"));
         assert!(result.contains("set -gx OPENAI_API_KEY 'sk-test\\'value'"));
         assert!(!result.contains("export OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn setup_flow_persists_provider_model_and_profile_block() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = tmp.path().join("config.toml");
+        let profile = tmp.path().join(".zshrc");
+        std::fs::write(&profile, "").unwrap();
+        let mut prompts =
+            FakePrompts::new("openai", "sk-test", "gpt-4.1-mini", true, profile.clone());
+        let mut envs = Vec::new();
+
+        let outcome =
+            run_setup_flow_with_profile(&cfg, &mut prompts, Some(profile.clone()), |k, v| {
+                envs.push((k.to_string(), v.to_string()));
+            })
+            .unwrap();
+
+        assert_eq!(outcome.provider, "openai");
+        assert_eq!(outcome.model, "gpt-4.1-mini");
+        assert_eq!(outcome.env_var.as_deref(), Some("OPENAI_API_KEY"));
+        assert_eq!(outcome.profile_updated.as_deref(), Some(profile.as_path()));
+        assert!(std::fs::read_to_string(&cfg)
+            .unwrap()
+            .contains("default_model = \"openai:gpt-4.1-mini\""));
+        assert!(std::fs::read_to_string(&profile)
+            .unwrap()
+            .contains("export OPENAI_API_KEY='sk-test'"));
+        assert_eq!(envs, vec![("OPENAI_API_KEY".into(), "sk-test".into())]);
     }
 }
