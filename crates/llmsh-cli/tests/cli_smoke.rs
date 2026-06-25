@@ -130,3 +130,58 @@ fn explicit_config_flag_rejects_missing_path() {
         .assert()
         .success();
 }
+
+#[test]
+fn first_launch_noninteractive_prints_manual_setup_instructions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = tmp.path().join("config.toml");
+
+    Command::cargo_bin("llmsh")
+        .unwrap()
+        .env("LLMSH_CONFIG", &cfg)
+        .env("LLMSH_NO_AUDIT", "1")
+        .env("LLMSH_NO_AUTOINIT", "1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No llmsh config found. Created"))
+        .stdout(predicate::str::contains(
+            "Set one provider API key, then run `llmsh setup` or `llmsh` again:",
+        ));
+
+    assert!(
+        cfg.exists(),
+        "first launch should still create the default config"
+    );
+}
+
+#[test]
+fn missing_key_noninteractive_returns_setup_hint() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = tmp.path().join("config.toml");
+    std::fs::write(
+        &cfg,
+        r#"
+default_model = "openai:gpt-4.1-mini"
+
+[providers.openai]
+api_key_env = "OPENAI_API_KEY"
+base_url = "https://api.openai.com/v1"
+tool_calling = "native"
+models = ["gpt-4.1-mini"]
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("llmsh")
+        .unwrap()
+        .env("LLMSH_CONFIG", &cfg)
+        .env_remove("OPENAI_API_KEY")
+        .env("LLMSH_NO_AUDIT", "1")
+        .env("LLMSH_NO_AUTOINIT", "1")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "run `llmsh setup` to configure a provider and API key",
+        ))
+        .stderr(predicate::str::contains("env var OPENAI_API_KEY not set"));
+}

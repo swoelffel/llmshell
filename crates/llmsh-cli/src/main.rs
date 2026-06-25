@@ -63,6 +63,20 @@ struct MissingProviderKey {
     env_var: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FirstLaunchAction {
+    Continue,
+    RunSetup,
+    PrintManualInstructionsAndExit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MissingKeyRecoveryAction {
+    RetryAfterSetup(MissingProviderKey),
+    ReturnErrorWithSetupHint,
+    ReturnOriginalError,
+}
+
 #[derive(clap::Subcommand, Debug)]
 enum Cmd {
     /// Run first-time provider/API key/model setup.
@@ -131,12 +145,23 @@ async fn main() -> anyhow::Result<()> {
         load_config_with_overrides(&cfg_path, cli.model.as_deref(), &workspace_root)?;
     if created {
         println!("No llmsh config found. Created {}.", cfg_path.display());
-        if stdin_is_interactive() && prompt_run_setup_now()? {
-            run_interactive_setup(&cfg_path).await?;
-            cfg = load_config_with_overrides(&cfg_path, cli.model.as_deref(), &workspace_root)?.0;
-        } else {
-            print_manual_setup_instructions();
-            return Ok(());
+        let interactive = stdin_is_interactive();
+        let action = decide_first_launch_action(
+            created,
+            interactive,
+            interactive && prompt_run_setup_now()?,
+        );
+        match action {
+            FirstLaunchAction::Continue => {}
+            FirstLaunchAction::RunSetup => {
+                run_interactive_setup(&cfg_path).await?;
+                cfg =
+                    load_config_with_overrides(&cfg_path, cli.model.as_deref(), &workspace_root)?.0;
+            }
+            FirstLaunchAction::PrintManualInstructionsAndExit => {
+                print_manual_setup_instructions();
+                return Ok(());
+            }
         }
     }
 
@@ -155,37 +180,49 @@ async fn main() -> anyhow::Result<()> {
     let (inner, shared_model, provider_prefix) = match build_provider(&cfg) {
         Ok(provider) => provider,
         Err(err) => {
-            let recovered = cfg
-                .default_model
-                .split_once(':')
-                .and_then(|(provider_name, _)| {
-                    missing_provider_key_from_error(provider_name, &err)
-                });
-            if let Some(missing) = recovered {
-                if stdin_is_interactive() {
-                    eprintln!(
-                        "Missing {} for provider {}. Run setup now? [Y/n]",
-                        missing.env_var, missing.provider
-                    );
-                    if prompt_yes_no_default_yes()? {
-                        run_interactive_setup(&cfg_path).await?;
-                        cfg = load_config_with_overrides(
-                            &cfg_path,
-                            cli.model.as_deref(),
-                            &workspace_root,
-                        )?
-                        .0;
-                        build_provider(&cfg)?
+            let interactive = stdin_is_interactive();
+            let action = match cfg.default_model.split_once(':') {
+                Some((provider_name, _)) => {
+                    if let Some(missing) = missing_provider_key_from_error(provider_name, &err) {
+                        let run_setup_now = if interactive {
+                            eprintln!(
+                                "Missing {} for provider {}. Run setup now? [Y/n]",
+                                missing.env_var, missing.provider
+                            );
+                            prompt_yes_no_default_yes()?
+                        } else {
+                            false
+                        };
+                        decide_missing_key_recovery_action(
+                            &cfg.default_model,
+                            &err,
+                            interactive,
+                            run_setup_now,
+                        )
                     } else {
-                        return Err(err)
-                            .context("run `llmsh setup` to configure a provider and API key");
+                        MissingKeyRecoveryAction::ReturnOriginalError
                     }
-                } else {
+                }
+                None => MissingKeyRecoveryAction::ReturnOriginalError,
+            };
+            match action {
+                MissingKeyRecoveryAction::RetryAfterSetup(_) => {
+                    run_interactive_setup(&cfg_path).await?;
+                    cfg = load_config_with_overrides(
+                        &cfg_path,
+                        cli.model.as_deref(),
+                        &workspace_root,
+                    )?
+                    .0;
+                    build_provider(&cfg)?
+                }
+                MissingKeyRecoveryAction::ReturnErrorWithSetupHint => {
                     return Err(err)
                         .context("run `llmsh setup` to configure a provider and API key");
                 }
-            } else {
-                return Err(err);
+                MissingKeyRecoveryAction::ReturnOriginalError => {
+                    return Err(err);
+                }
             }
         }
     };
@@ -209,16 +246,13 @@ async fn main() -> anyhow::Result<()> {
     } else {
         AuditWriter::open(&audit_dir, &session_id)?
     };
-    writer.write(&AuditEvent::SessionStarted {
-        ts: now_iso(),
-        session_id: session_id.clone(),
-        cwd: workspace_root.display().to_string(),
-        model: cfg.default_model.clone(),
-        policy_mode: cfg.policy.unknown.clone(),
-        llmsh_version: env!("CARGO_PKG_VERSION").into(),
-        schema_version: llmsh_audit::event::SCHEMA_VERSION,
-        config_effective_hash: cfg.effective_hash(),
-    })?;
+    // Emit SessionStarted only after any first-run setup / missing-key recovery
+    // has finished so the audit record reflects the final effective config.
+    writer.write(&session_started_event(
+        session_id.clone(),
+        &workspace_root,
+        &cfg,
+    ))?;
 
     // 4. Tools
     let mut registry = ToolRegistry::new();
@@ -575,6 +609,55 @@ fn missing_provider_key_from_error(
     })
 }
 
+fn decide_first_launch_action(
+    created: bool,
+    interactive: bool,
+    run_setup_now: bool,
+) -> FirstLaunchAction {
+    if !created {
+        return FirstLaunchAction::Continue;
+    }
+
+    if interactive && run_setup_now {
+        FirstLaunchAction::RunSetup
+    } else {
+        FirstLaunchAction::PrintManualInstructionsAndExit
+    }
+}
+
+fn decide_missing_key_recovery_action(
+    default_model: &str,
+    err: &anyhow::Error,
+    interactive: bool,
+    run_setup_now: bool,
+) -> MissingKeyRecoveryAction {
+    let Some((provider_name, _)) = default_model.split_once(':') else {
+        return MissingKeyRecoveryAction::ReturnOriginalError;
+    };
+    let Some(missing) = missing_provider_key_from_error(provider_name, err) else {
+        return MissingKeyRecoveryAction::ReturnOriginalError;
+    };
+
+    if interactive && run_setup_now {
+        MissingKeyRecoveryAction::RetryAfterSetup(missing)
+    } else {
+        MissingKeyRecoveryAction::ReturnErrorWithSetupHint
+    }
+}
+
+fn session_started_event(session_id: String, workspace_root: &Path, cfg: &Config) -> AuditEvent {
+    AuditEvent::SessionStarted {
+        ts: now_iso(),
+        session_id,
+        cwd: workspace_root.display().to_string(),
+        model: cfg.default_model.clone(),
+        policy_mode: cfg.policy.unknown.clone(),
+        llmsh_version: env!("CARGO_PKG_VERSION").into(),
+        schema_version: llmsh_audit::event::SCHEMA_VERSION,
+        config_effective_hash: cfg.effective_hash(),
+    }
+}
+
 fn build_provider(cfg: &Config) -> anyhow::Result<ProviderWithModel> {
     let (provider_name, model) = cfg
         .default_model
@@ -910,6 +993,67 @@ mod tests {
         let missing = missing_provider_key_from_error("openai", &err).unwrap();
         assert_eq!(missing.provider, "openai");
         assert_eq!(missing.env_var, "OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn first_launch_decline_falls_back_to_manual_instructions() {
+        assert_eq!(
+            decide_first_launch_action(true, true, false),
+            FirstLaunchAction::PrintManualInstructionsAndExit
+        );
+    }
+
+    #[test]
+    fn first_launch_noninteractive_falls_back_to_manual_instructions() {
+        assert_eq!(
+            decide_first_launch_action(true, false, false),
+            FirstLaunchAction::PrintManualInstructionsAndExit
+        );
+    }
+
+    #[test]
+    fn missing_key_recovery_decline_returns_setup_hint() {
+        let err = anyhow::anyhow!("env var OPENAI_API_KEY not set");
+        assert_eq!(
+            decide_missing_key_recovery_action("openai:gpt-4.1-mini", &err, true, false),
+            MissingKeyRecoveryAction::ReturnErrorWithSetupHint
+        );
+    }
+
+    #[test]
+    fn missing_key_recovery_noninteractive_returns_setup_hint() {
+        let err = anyhow::anyhow!("env var OPENAI_API_KEY not set");
+        assert_eq!(
+            decide_missing_key_recovery_action("openai:gpt-4.1-mini", &err, false, false),
+            MissingKeyRecoveryAction::ReturnErrorWithSetupHint
+        );
+    }
+
+    #[test]
+    fn session_started_event_uses_final_effective_config() {
+        let mut cfg = Config::defaults();
+        cfg.default_model = "anthropic:claude-sonnet-4-20250514".into();
+        cfg.policy.unknown = "deny".into();
+
+        let event = session_started_event("session-123".into(), Path::new("/tmp/workspace"), &cfg);
+
+        match event {
+            AuditEvent::SessionStarted {
+                session_id,
+                cwd,
+                model,
+                policy_mode,
+                config_effective_hash,
+                ..
+            } => {
+                assert_eq!(session_id, "session-123");
+                assert_eq!(cwd, "/tmp/workspace");
+                assert_eq!(model, "anthropic:claude-sonnet-4-20250514");
+                assert_eq!(policy_mode, "deny");
+                assert_eq!(config_effective_hash, cfg.effective_hash());
+            }
+            other => panic!("expected SessionStarted, got {other:?}"),
+        }
     }
 
     #[tokio::test]
